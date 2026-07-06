@@ -25,12 +25,36 @@ export const nodes = sqliteTable("nodes", {
   port: integer("port").notNull(),
   username: text("username").notNull(),
   authType: text("auth_type", { enum: ["private_key", "password_session"] }).notNull(),
+  credentialKind: text("credential_kind", {
+    enum: ["missing", "password_set", "private_key_set"],
+  }).notNull(),
+  credentialSecret: text("credential_secret"),
+  credentialLabel: text("credential_label"),
   role: text("role", { enum: ["source", "target", "both"] }).notNull(),
   osFamily: text("os_family"),
   primaryIp: text("primary_ip"),
   lastProbeStatus: text("last_probe_status", {
     enum: ["unknown", "ok", "failed"],
   }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+})
+
+export const shares = sqliteTable("shares", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  sourceNodeId: text("source_node_id")
+    .notNull()
+    .references(() => nodes.id, { onDelete: "cascade" }),
+  sourcePath: text("source_path").notNull(),
+  targetNodeId: text("target_node_id")
+    .notNull()
+    .references(() => nodes.id, { onDelete: "cascade" }),
+  targetPath: text("target_path").notNull(),
+  accessMode: text("access_mode", { enum: ["read_only", "read_write"] }).notNull(),
+  nfsVersion: text("nfs_version").notNull(),
+  autoMount: integer("auto_mount", { mode: "boolean" }).notNull(),
+  status: text("status", { enum: ["draft", "applying", "active", "failed"] }).notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 })

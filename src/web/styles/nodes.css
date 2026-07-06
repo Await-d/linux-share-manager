@@ -1,17 +1,67 @@
+.node-layout {
+  display: grid;
+  gap: var(--space-6);
+}
+
 .node-form {
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: var(--space-3);
 }
 
+.node-form .field {
+  grid-column: span 3;
+}
+
+.node-form > .field:first-of-type {
+  grid-column: 1 / -1;
+}
+
 .node-form .button,
-.node-form .form-error {
+.node-form .form-error,
+.form-heading,
+.credential-panel {
+  grid-column: 1 / -1;
+}
+
+.form-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-elevated);
+  padding: var(--space-4);
+}
+
+.form-heading h3,
+.form-heading p {
+  margin: 0;
+}
+
+.form-heading p {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.credential-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-elevated) 76%, transparent);
+  padding: var(--space-4);
+}
+
+.credential-panel .field:has(textarea),
+.credential-panel .field-file {
   grid-column: 1 / -1;
 }
 
 .node-list {
   display: grid;
   gap: var(--space-2);
-  margin-top: var(--space-5);
 }
 
 .node-row {
@@ -23,6 +73,10 @@
   border-radius: 8px;
   background: var(--surface-elevated);
   padding: var(--space-4);
+}
+
+.node-row-selected {
+  border-color: var(--accent-primary);
 }
 
 .node-row h3 {
@@ -47,6 +101,14 @@
   font-size: 13px;
 }
 
+.node-test-message {
+  grid-column: 1 / -1;
+  justify-self: end;
+  margin: 0;
+  color: var(--status-error);
+  font-size: 13px;
+}
+
 .empty-state {
   display: grid;
   place-items: center;
@@ -58,12 +120,18 @@
 }
 
 @media (max-width: 1040px) {
-  .node-form {
+  .node-form,
+  .credential-panel {
     grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 720px) {
+  .form-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .node-row {
     align-items: stretch;
     grid-template-columns: 1fr;
@@ -71,5 +139,9 @@
 
   .node-meta {
     justify-content: start;
+  }
+
+  .node-test-message {
+    justify-self: start;
   }
 }

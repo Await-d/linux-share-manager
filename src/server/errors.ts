@@ -4,7 +4,7 @@ export class AppError extends Error {
   constructor(
     readonly code: string,
     message: string,
-    readonly status: 400 | 401 | 403 | 404 | 409 | 422 | 429 | 500,
+    readonly status: 400 | 401 | 403 | 404 | 409 | 422 | 429 | 500 | 502 | 504,
   ) {
     super(message)
   }

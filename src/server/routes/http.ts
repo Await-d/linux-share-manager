@@ -21,5 +21,6 @@ export function normalizeError(error: unknown): AppError {
     return new AppError("VALIDATION_FAILED", "The request payload is invalid.", 422)
   }
 
-  return new AppError("INTERNAL_ERROR", "An unexpected error occurred.", 500)
+  const message = error instanceof Error ? error.message : "An unexpected error occurred."
+  return new AppError("INTERNAL_ERROR", message, 500)
 }

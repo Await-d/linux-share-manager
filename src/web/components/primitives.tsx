@@ -1,5 +1,10 @@
 import type { LucideIcon } from "lucide-react"
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react"
+import type {
+  ButtonHTMLAttributes,
+  InputHTMLAttributes,
+  ReactNode,
+  TextareaHTMLAttributes,
+} from "react"
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   readonly variant?: "primary" | "secondary" | "ghost" | "danger"
@@ -31,12 +36,29 @@ export function TextField({ label, error, id, ...props }: TextFieldProps) {
   )
 }
 
+type TextAreaFieldProps = TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  readonly label: string
+  readonly error?: string
+}
+
+export function TextAreaField({ label, error, id, ...props }: TextAreaFieldProps) {
+  const inputId = id ?? props.name
+  return (
+    <label className="field" htmlFor={inputId}>
+      <span className="field-label">{label}</span>
+      <textarea className="field-input field-textarea" id={inputId} {...props} />
+      {error === undefined ? null : <span className="field-error">{error}</span>}
+    </label>
+  )
+}
+
 type SelectFieldProps<T extends string> = {
   readonly label: string
   readonly name: string
   readonly value: T
   readonly options: readonly { readonly value: T; readonly label: string }[]
   readonly onChange: (value: T) => void
+  readonly disabled?: boolean
 }
 
 export function SelectField<T extends string>({
@@ -45,12 +67,14 @@ export function SelectField<T extends string>({
   value,
   options,
   onChange,
+  disabled,
 }: SelectFieldProps<T>) {
   return (
     <label className="field" htmlFor={name}>
       <span className="field-label">{label}</span>
       <select
         className="field-input"
+        disabled={disabled}
         id={name}
         name={name}
         onChange={(event) => {

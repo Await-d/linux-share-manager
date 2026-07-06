@@ -22,6 +22,26 @@ V1 必须完成的闭环：
 
 V1 不追求企业级多租户，也不提供通用存储平台能力。它先把“两台 Linux 之间安全、可追踪、可恢复地配置 NFS”做稳。
 
+## 1.1 当前实现状态
+
+截至 2026-07-06，仓库已经从文档阶段进入可运行基础实现阶段：
+
+- 已完成 Bun + Hono + SQLite 后端、Vite + React 前端、统一单端口静态服务。
+- 已完成单管理员初始化、登录、退出和 session 保护。
+- 已完成节点新增、编辑、列表展示、SSH 密码/私钥填写上传、凭据加密保存和安全响应脱敏。
+- 已完成节点“测试”按钮和 `/api/nodes/:id/test-connection`，用于快速检查服务端到节点 SSH 端口的 TCP 可达性。
+- 已完成共享草稿创建、编辑、删除和源/目标节点目录字段配置。
+- 已完成 Docker 单端口部署方案，默认使用宿主机 `18088 -> 容器 18088`。
+
+仍未完成的 V1 核心闭环：
+
+- 完整 SSH 登录认证测试、sudo 检测和结构化命令执行。
+- OS、NFS、systemd、防火墙、IP 和磁盘探测。
+- 执行计划生成、风险预览和二次确认。
+- 远程 NFS/systemd 配置执行、日志、回滚和健康检查。
+
+因此当前版本可作为 P0/P1 基线和 P2 开发起点，但还不能用于真实生产修改远端 Linux 配置。
+
 ## 2. 默认决策
 
 这些决策是开发默认值，除非后续明确修改，否则按这里实现。
@@ -768,11 +788,15 @@ created_at
 | `GET` | `/api/nodes` | 节点列表 |
 | `GET` | `/api/nodes/:id` | 节点详情 |
 | `PATCH` | `/api/nodes/:id` | 更新节点基础信息 |
+| `POST` | `/api/nodes/:id/test-connection` | 快速测试 SSH 端口 TCP 可达性 |
+| `GET` | `/api/nodes/:id/browse` | 使用已保存 SSH 凭据浏览远端目录 |
 | `POST` | `/api/nodes/:id/probe` | 执行探测 |
 | `GET` | `/api/nodes/:id/probe-results` | 探测历史 |
 | `DELETE` | `/api/nodes/:id` | 删除节点 |
 
 删除节点前必须检查是否有关联 share。
+
+`test-connection` 当前只验证 TCP 连通，不验证 SSH 用户名、密码、私钥或 sudo 权限。完整认证和系统探测归入 P2/P3。
 
 ### 10.3 Shares
 
@@ -781,6 +805,7 @@ created_at
 | `POST` | `/api/shares` | 创建共享草稿 |
 | `GET` | `/api/shares` | 共享列表 |
 | `GET` | `/api/shares/:id` | 共享详情 |
+| `PATCH` | `/api/shares/:id` | 更新共享草稿 |
 | `POST` | `/api/shares/:id/plan` | 生成计划 |
 | `POST` | `/api/shares/:id/apply` | 确认并执行计划 |
 | `GET` | `/api/shares/:id/events` | 执行事件流 |
@@ -1254,12 +1279,13 @@ SSH 和系统命令先用 fake executor 测试业务逻辑，再用真实 VM 做
 
 ```text
 LSM_HOST=127.0.0.1
-LSM_PORT=8080
+LSM_PORT=18088
 LSM_DATABASE_PATH=./data/linux-share-manager.sqlite
+LSM_STATIC_ROOT=./dist/web
 LSM_SECRET_KEY=
 LSM_SESSION_COOKIE_NAME=lsm_session
 LSM_SESSION_TTL_SECONDS=86400
-LSM_SSH_CONNECT_TIMEOUT_MS=10000
+LSM_SSH_CONNECT_TIMEOUT_MS=5000
 LSM_COMMAND_TIMEOUT_MS=30000
 LSM_LOG_LEVEL=info
 LSM_TRUST_PROXY=false

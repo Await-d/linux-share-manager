@@ -1,0 +1,217 @@
+.path-browser {
+  position: relative;
+}
+
+.path-browser-input-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: stretch;
+}
+
+.path-browser-input-row .field-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.path-browser-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  min-width: 40px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--surface-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease-out,
+    color 120ms ease-out;
+}
+
+.path-browser-button:hover:not(:disabled) {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.path-browser-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.path-browser-dropdown {
+  position: absolute;
+  z-index: 50;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: var(--space-1);
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  max-height: 360px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.path-browser-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-2) var(--space-3);
+}
+
+.path-browser-cwd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.path-browser-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.path-browser-link {
+  background: none;
+  border: none;
+  color: var(--accent-primary);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+}
+
+.path-browser-link:hover {
+  color: var(--accent-hover);
+}
+
+.path-browser-icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out;
+}
+
+.path-browser-icon-button:hover:not(:disabled) {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+
+.path-browser-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.path-browser-error {
+  padding: var(--space-3);
+  color: var(--status-error);
+  font-size: 13px;
+}
+
+.path-browser-list {
+  overflow-y: auto;
+  max-height: 240px;
+}
+
+.path-browser-empty {
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.path-browser-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  transition: background-color 120ms ease-out;
+}
+
+.path-browser-entry:last-child {
+  border-bottom: none;
+}
+
+.path-browser-entry:hover {
+  background: var(--surface-muted);
+}
+
+.path-browser-entry-dir {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.path-browser-entry-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-browser-entry-select {
+  flex-shrink: 0;
+  color: var(--accent-primary);
+  font-size: 12px;
+}
+
+.path-browser-footer {
+  display: flex;
+  justify-content: end;
+  border-top: 1px solid var(--border-subtle);
+  padding: var(--space-2) var(--space-3);
+}
+
+.path-browser-select-button {
+  border: 1px solid var(--accent-primary);
+  border-radius: 6px;
+  background: var(--accent-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  padding: var(--space-1) var(--space-3);
+  transition: background-color 120ms ease-out;
+}
+
+.path-browser-select-button:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -38,7 +38,15 @@
     }
   },
   "files": {
-    "includes": ["**", "!node_modules", "!dist", "!coverage", "!.agentdocs/runtime", "!.git"]
+    "includes": [
+      "**",
+      "!node_modules",
+      "!dist",
+      "!coverage",
+      "!.agentdocs/runtime",
+      "!.git",
+      "!.codegraph"
+    ]
   },
   "overrides": [
     {

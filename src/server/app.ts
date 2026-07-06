@@ -9,8 +9,13 @@ import type { AppEnv } from "./middleware/auth"
 import { sameOriginGuard } from "./middleware/security"
 import { NodeRepository } from "./nodes/repository"
 import { registerAuthRoutes } from "./routes/auth"
+import { registerBrowseRoutes } from "./routes/browse"
 import { normalizeError } from "./routes/http"
+import { registerInterconnectRoutes } from "./routes/interconnect"
 import { registerNodeRoutes } from "./routes/nodes"
+import { registerShareRoutes } from "./routes/shares"
+import { ShareRepository } from "./shares/repository"
+import { registerStaticRoutes } from "./static"
 
 export type CreateAppOptions = {
   readonly config?: AppConfig
@@ -21,7 +26,8 @@ export function createApp(options: CreateAppOptions = {}): Hono<AppEnv> {
   const config = options.config ?? loadConfig()
   const database = options.database ?? createDatabase(config.databasePath)
   const auth = new AuthService({ database, config })
-  const nodes = new NodeRepository(database)
+  const nodes = new NodeRepository(database, config.secretKey)
+  const shares = new ShareRepository(database)
   const app = new Hono<AppEnv>()
 
   app.use("/api/*", sameOriginGuard(config))
@@ -29,6 +35,10 @@ export function createApp(options: CreateAppOptions = {}): Hono<AppEnv> {
 
   registerAuthRoutes({ app, auth, config })
   registerNodeRoutes({ app, auth, config, nodes })
+  registerShareRoutes({ app, auth, config, shares })
+  registerBrowseRoutes({ app, auth, config, nodes })
+  registerInterconnectRoutes({ app, auth, config, nodes })
+  registerStaticRoutes({ app, staticRoot: config.staticRoot })
 
   app.notFound((context) =>
     context.json({ error: { code: "NOT_FOUND", message: "Route not found." } }, 404),

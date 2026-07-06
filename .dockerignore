@@ -1,0 +1,7 @@
+.agentdocs/runtime/
+.codegraph/
+.git/
+data/
+dist/
+node_modules/
+*.log

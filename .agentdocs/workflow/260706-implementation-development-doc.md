@@ -15,7 +15,9 @@ Supporting coordination artifacts:
 
 ## Current Analysis
 
-The repository currently contains only `PROJECT_CONCEPT.md`. There is no application source code, README, package manifest, or existing implementation. The implementation document therefore needs to turn the concept into concrete defaults, architecture, module boundaries, data model, API shape, NFS/systemd behavior, development phases, tests, and MVP acceptance criteria.
+This workflow originally created the implementation development document from `PROJECT_CONCEPT.md`. The repository has since moved beyond documentation and now contains a runnable V1 baseline: Bun/Hono API, React/Vite console, SQLite migrations, auth, nodes, share drafts, credential encryption, node TCP connection testing, directory browsing scaffolding, and single-port Docker deployment.
+
+The implementation document now serves as the long-running roadmap and must distinguish between capabilities already landed and the remaining V1 work.
 
 Important gaps covered by the new document:
 
@@ -73,4 +75,6 @@ The document uses these V1 defaults:
 - Plan maintenance: T-03 completed by creating `IMPLEMENTATION_DEVELOPMENT.md`.
 - Plan maintenance: T-04 completed by creating `.agentdocs` workflow and runtime artifacts.
 - Plan maintenance: T-05 completed by reviewing required sections and final file list.
+- Status refresh: current baseline now includes auth, node add/edit, encrypted credentials, node connection test, share drafts, directory browsing scaffolding, static single-port serving, and Docker deployment.
+- Remaining implementation: real SSH command execution, node probes, plan/apply pipeline, NFS/systemd writes, logs, rollback, and health checks.
 - Memory sync: completed in `.agentdocs/index.md`.
