@@ -1,0 +1,135 @@
+.button,
+.status-badge {
+  display: flex;
+  align-items: center;
+}
+
+.button {
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 38px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  padding: 0 var(--space-3);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    transform 120ms ease-out,
+    background-color 120ms ease-out,
+    border-color 120ms ease-out;
+}
+
+.button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.button-primary {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary);
+}
+
+.button-primary:hover:not(:disabled) {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+}
+
+.button-secondary,
+.button-ghost {
+  background: var(--surface-elevated);
+}
+
+.button-ghost {
+  border-color: transparent;
+}
+
+.button-danger {
+  border-color: var(--status-error);
+  background: transparent;
+  color: var(--status-error);
+}
+
+.field,
+.auth-form,
+.node-form {
+  display: grid;
+}
+
+.field {
+  gap: var(--space-2);
+}
+
+.field-input {
+  min-height: 40px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  padding: 0 var(--space-3);
+  outline: none;
+}
+
+.field-input:focus {
+  border-color: var(--accent-primary);
+}
+
+.field-error,
+.form-error {
+  color: var(--status-error);
+}
+
+.auth-form {
+  gap: var(--space-4);
+}
+
+.auth-mark {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--surface-elevated);
+  color: var(--accent-primary);
+}
+
+.status-badge {
+  gap: var(--space-2);
+  width: fit-content;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentcolor;
+}
+
+.status-success {
+  color: var(--status-success);
+}
+
+.status-warning {
+  color: var(--status-warning);
+}
+
+.status-error {
+  color: var(--status-error);
+}
+
+.status-info {
+  color: var(--status-info);
+}
+
+.status-neutral {
+  color: var(--text-muted);
+}
