@@ -5,9 +5,11 @@ import { CreateNodeRequestSchema, UpdateNodeRequestSchema } from "../../shared/s
 import type { AuthService } from "../auth/service"
 import type { AppConfig } from "../config"
 import { AppError } from "../errors"
+import { testSshAuthentication } from "../executor/ssh-executor"
 import type { AppEnv } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
 import { testTcpConnection } from "../nodes/connectivity"
+import { probeNode } from "../nodes/probe"
 import type { NodeRepository } from "../nodes/repository"
 
 type NodeRouteOptions = {
@@ -39,6 +41,7 @@ export function registerNodeRoutes(options: NodeRouteOptions): void {
     return context.json(node, 201)
   })
 
+  // TCP connectivity test (fast, port-level only)
   options.app.post(
     "/api/nodes/:id/test-connection",
     auth,
@@ -61,6 +64,83 @@ export function registerNodeRoutes(options: NodeRouteOptions): void {
       }
 
       return context.json(tested)
+    },
+  )
+
+  // Full SSH authentication test (login + credential verification)
+  options.app.post(
+    "/api/nodes/:id/test-auth",
+    auth,
+    zValidator("param", NodeParamSchema),
+    async (context) => {
+      const { id } = context.req.valid("param")
+      const node = options.nodes.find(id)
+      if (node === null) {
+        throw new AppError("NODE_NOT_FOUND", "The requested node does not exist.", 404)
+      }
+
+      const credential = options.nodes.findCredential(id)
+      if (credential === null) {
+        throw new AppError("NODE_NOT_FOUND", "The requested node does not exist.", 404)
+      }
+
+      const result = await testSshAuthentication(credential, options.config.sshConnectTimeoutMs)
+
+      options.nodes.updateProbeStatus(id, result.success ? "ok" : "failed")
+
+      return context.json({
+        nodeId: id,
+        authenticated: result.success,
+        error: result.error ?? null,
+      })
+    },
+  )
+
+  // Full node probe (OS, sudo, systemd, NFS, firewall, IP, disk)
+  options.app.post(
+    "/api/nodes/:id/probe",
+    auth,
+    zValidator("param", NodeParamSchema),
+    async (context) => {
+      const { id } = context.req.valid("param")
+      const node = options.nodes.find(id)
+      if (node === null) {
+        throw new AppError("NODE_NOT_FOUND", "The requested node does not exist.", 404)
+      }
+
+      const credential = options.nodes.findCredential(id)
+      if (credential === null) {
+        throw new AppError("NODE_NOT_FOUND", "The requested node does not exist.", 404)
+      }
+
+      const probeResult = await probeNode(credential, {
+        connectTimeoutMs: options.config.sshConnectTimeoutMs,
+        commandTimeoutMs: 30_000,
+        maxOutputBytes: 16_384,
+      })
+
+      // Save probe results to node
+      const updated = options.nodes.saveProbeResult(id, probeResult)
+      if (updated === null) {
+        throw new AppError("NODE_NOT_FOUND", "The requested node does not exist.", 404)
+      }
+
+      return context.json({
+        node: updated,
+        probe: probeResult,
+      })
+    },
+  )
+
+  // Get probe history
+  options.app.get(
+    "/api/nodes/:id/probe-results",
+    auth,
+    zValidator("param", NodeParamSchema),
+    (context) => {
+      const { id } = context.req.valid("param")
+      const results = options.nodes.listProbeResults(id)
+      return context.json({ results })
     },
   )
 

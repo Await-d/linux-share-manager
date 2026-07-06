@@ -1,13 +1,16 @@
 import { Hono } from "hono"
+import { AuditService } from "./audit/service"
 import { AuthService } from "./auth/service"
 import type { AppConfig } from "./config"
 import { loadConfig } from "./config"
 import type { AppDatabase } from "./db/client"
 import { createDatabase } from "./db/client"
 import { AppError } from "./errors"
+import { HealthService } from "./health/service"
 import type { AppEnv } from "./middleware/auth"
 import { sameOriginGuard } from "./middleware/security"
 import { NodeRepository } from "./nodes/repository"
+import { PlanRepository } from "./plans/repository"
 import { registerAuthRoutes } from "./routes/auth"
 import { registerBrowseRoutes } from "./routes/browse"
 import { normalizeError } from "./routes/http"
@@ -28,6 +31,9 @@ export function createApp(options: CreateAppOptions = {}): Hono<AppEnv> {
   const auth = new AuthService({ database, config })
   const nodes = new NodeRepository(database, config.secretKey)
   const shares = new ShareRepository(database)
+  const plans = new PlanRepository(database)
+  const health = new HealthService(database)
+  const audit = new AuditService(database)
   const app = new Hono<AppEnv>()
 
   app.use("/api/*", sameOriginGuard(config))
@@ -35,7 +41,7 @@ export function createApp(options: CreateAppOptions = {}): Hono<AppEnv> {
 
   registerAuthRoutes({ app, auth, config })
   registerNodeRoutes({ app, auth, config, nodes })
-  registerShareRoutes({ app, auth, config, shares })
+  registerShareRoutes({ app, auth, config, shares, nodes, plans, health, audit })
   registerBrowseRoutes({ app, auth, config, nodes })
   registerInterconnectRoutes({ app, auth, config, nodes })
   registerStaticRoutes({ app, staticRoot: config.staticRoot })

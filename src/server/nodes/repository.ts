@@ -1,9 +1,10 @@
-import { eq } from "drizzle-orm"
+import { desc, eq } from "drizzle-orm"
 import type { CreateNodeRequest, NodeResponse, UpdateNodeRequest } from "../../shared/schemas/nodes"
 import { decryptCredentialSecret, encryptCredentialSecret } from "../credentials/crypto"
 import type { AppDatabase } from "../db/client"
-import { nodes } from "../db/schema"
+import { nodeProbeResults, nodes } from "../db/schema"
 import { AppError, DatabaseInvariantError } from "../errors"
+import type { NodeProbeResult } from "./probe"
 
 export type NodeCredential = {
   readonly id: string
@@ -13,6 +14,24 @@ export type NodeCredential = {
   readonly authType: "private_key" | "password_session"
   readonly credentialKind: "missing" | "password_set" | "private_key_set"
   readonly decryptedSecret: string | null
+}
+
+export type ProbeResultRow = {
+  readonly id: string
+  readonly nodeId: string
+  readonly status: string
+  readonly sshOk: boolean
+  readonly sudoOk: boolean
+  readonly systemdOk: boolean
+  readonly nfsServerInstalled: boolean
+  readonly nfsClientInstalled: boolean
+  readonly firewallType: string | null
+  readonly firewallActive: boolean
+  readonly ipAddresses: readonly string[]
+  readonly diskSummary: string | null
+  readonly errorCode: string | null
+  readonly errorMessage: string | null
+  readonly createdAt: string
 }
 
 export class NodeRepository {
@@ -126,6 +145,81 @@ export class NodeRepository {
     return updated === undefined ? null : toNodeResponse(updated)
   }
 
+  saveProbeResult(id: string, result: NodeProbeResult): NodeResponse | null {
+    const now = new Date()
+    const summary = buildProbeSummary(result)
+
+    // Update node with probe info
+    const updated = this.database.db
+      .update(nodes)
+      .set({
+        osFamily: result.osFamily,
+        osVersion: result.osVersion,
+        primaryIp: result.primaryIp,
+        lastProbeStatus: result.sshOk ? "ok" : "failed",
+        lastProbeSummary: summary,
+        updatedAt: now,
+      })
+      .where(eq(nodes.id, id))
+      .returning()
+      .all()
+      .at(0)
+
+    // Save probe result record
+    this.database.db
+      .insert(nodeProbeResults)
+      .values({
+        id: crypto.randomUUID(),
+        nodeId: id,
+        status: result.sshOk ? "ok" : "failed",
+        sshOk: result.sshOk,
+        sudoOk: result.sudoOk,
+        systemdOk: result.systemdOk,
+        nfsServerInstalled: result.nfsServerInstalled,
+        nfsClientInstalled: result.nfsClientInstalled,
+        firewallType: result.firewallType,
+        firewallActive: result.firewallActive,
+        ipAddressesJson: JSON.stringify(result.ipAddresses),
+        diskSummaryJson: JSON.stringify(result.diskSummary),
+        errorCode: result.sshOk ? null : "SSH_CONNECT_FAILED",
+        errorMessage: result.sshError,
+        rawSummary: summary,
+        createdAt: now,
+      })
+      .run()
+
+    return updated === undefined ? null : toNodeResponse(updated)
+  }
+
+  listProbeResults(nodeId: string): readonly ProbeResultRow[] {
+    const rows = this.database.db
+      .select()
+      .from(nodeProbeResults)
+      .where(eq(nodeProbeResults.nodeId, nodeId))
+      .orderBy(desc(nodeProbeResults.createdAt))
+      .limit(20)
+      .all()
+
+    return rows.map((row) => ({
+      id: row.id,
+      nodeId: row.nodeId,
+      status: row.status,
+      sshOk: row.sshOk,
+      sudoOk: row.sudoOk,
+      systemdOk: row.systemdOk,
+      nfsServerInstalled: row.nfsServerInstalled,
+      nfsClientInstalled: row.nfsClientInstalled,
+      firewallType: row.firewallType,
+      firewallActive: row.firewallActive,
+      ipAddresses: safeParseJsonArray(row.ipAddressesJson),
+      diskSummary: row.diskSummaryJson,
+      errorCode: row.errorCode,
+      errorMessage: row.errorMessage,
+      createdAt:
+        row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+    }))
+  }
+
   findCredential(id: string): NodeCredential | null {
     const row = this.database.db.select().from(nodes).where(eq(nodes.id, id)).limit(1).all().at(0)
     if (row === undefined) {
@@ -160,6 +254,31 @@ function toNodeResponse(row: NodeRow): NodeResponse {
     osFamily: row.osFamily,
     primaryIp: row.primaryIp,
     lastProbeStatus: row.lastProbeStatus,
+  }
+}
+
+function buildProbeSummary(result: NodeProbeResult): string {
+  const parts: string[] = []
+  parts.push(`SSH: ${result.sshOk ? "OK" : "FAILED"}`)
+  parts.push(`sudo: ${result.sudoOk ? "OK" : "UNAVAILABLE"}`)
+  parts.push(`systemd: ${result.systemdOk ? "OK" : "UNAVAILABLE"}`)
+  parts.push(`NFS Server: ${result.nfsServerInstalled ? "Installed" : "Missing"}`)
+  parts.push(`NFS Client: ${result.nfsClientInstalled ? "Installed" : "Missing"}`)
+  if (result.firewallType) {
+    parts.push(
+      `Firewall: ${result.firewallType} (${result.firewallActive ? "active" : "inactive"})`,
+    )
+  }
+  return parts.join("; ")
+}
+
+function safeParseJsonArray(raw: string | null): readonly string[] {
+  if (raw === null) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
   }
 }
 

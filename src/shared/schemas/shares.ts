@@ -1,7 +1,18 @@
 import { z } from "zod"
 
 const ShareAccessModeSchema = z.enum(["read_only", "read_write"])
-const ShareStatusSchema = z.enum(["draft", "applying", "active", "failed"])
+const ShareStatusSchema = z.enum([
+  "draft",
+  "planned",
+  "applying",
+  "active",
+  "degraded",
+  "partial_failed",
+  "disabled",
+  "unmounted",
+  "deleting",
+  "deleted",
+])
 
 const AbsoluteLinuxPathSchema = z
   .string()
@@ -44,8 +55,40 @@ export const ShareResponseSchema = z.object({
   status: ShareStatusSchema,
 })
 
+export const PlanResponseSchema = z.object({
+  id: z.string(),
+  shareId: z.string(),
+  version: z.number(),
+  status: z.string(),
+  riskLevel: z.string(),
+  plan: z.unknown(),
+  createdBy: z.string().nullable(),
+  confirmedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+
+export const HealthCheckResponseSchema = z.object({
+  id: z.string(),
+  shareId: z.string(),
+  status: z.string(),
+  sourceOnline: z.boolean(),
+  targetOnline: z.boolean(),
+  nfsServiceOk: z.boolean().nullable(),
+  mountpointOk: z.boolean().nullable(),
+  readOk: z.boolean().nullable(),
+  writeOk: z.boolean().nullable(),
+  latencyMs: z.number().nullable(),
+  errorCode: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  summary: z.string(),
+  createdAt: z.string(),
+})
+
 export type CreateShareRequest = z.infer<typeof CreateShareRequestSchema>
 export type UpdateShareRequest = z.infer<typeof UpdateShareRequestSchema>
 export type ShareResponse = z.infer<typeof ShareResponseSchema>
 export type ShareStatus = z.infer<typeof ShareStatusSchema>
 export type ShareAccessMode = z.infer<typeof ShareAccessModeSchema>
+export type PlanResponse = z.infer<typeof PlanResponseSchema>
+export type HealthCheckResponse = z.infer<typeof HealthCheckResponseSchema>

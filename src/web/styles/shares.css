@@ -29,10 +29,35 @@
   cursor: pointer;
 }
 
+.interconnect-panel {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-elevated) 76%, transparent);
+  padding: var(--space-4);
+}
+
+.interconnect-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.interconnect-nodes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--text-muted);
+}
+
 .share-form .button,
 .share-form .form-error,
 .share-form .form-heading,
-.share-form .toggle-field {
+.share-form .toggle-field,
+.share-form .interconnect-panel {
   grid-column: 1 / -1;
 }
 

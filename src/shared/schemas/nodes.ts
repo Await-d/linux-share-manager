@@ -59,6 +59,46 @@ export const NodeResponseSchema = z.object({
   lastProbeStatus: ProbeStatusSchema,
 })
 
+export const AuthTestResponseSchema = z.object({
+  nodeId: z.string(),
+  authenticated: z.boolean(),
+  error: z.string().nullable(),
+})
+
+export const DiskInfoSchema = z.object({
+  filesystem: z.string(),
+  mountPoint: z.string(),
+  total: z.string(),
+  used: z.string(),
+  available: z.string(),
+  usePercent: z.string(),
+})
+
+export const NodeProbeResponseSchema = z.object({
+  nodeId: z.string(),
+  sshOk: z.boolean(),
+  sshError: z.string().nullable(),
+  osFamily: z.string().nullable(),
+  osVersion: z.string().nullable(),
+  osPrettyName: z.string().nullable(),
+  sudoOk: z.boolean(),
+  sudoError: z.string().nullable(),
+  systemdOk: z.boolean(),
+  systemdState: z.string().nullable(),
+  nfsServerInstalled: z.boolean(),
+  nfsClientInstalled: z.boolean(),
+  firewallType: z.string().nullable(),
+  firewallActive: z.boolean(),
+  ipAddresses: z.array(z.string()),
+  primaryIp: z.string().nullable(),
+  diskSummary: z.array(DiskInfoSchema),
+  packageManager: z.string().nullable(),
+  probedAt: z.string(),
+})
+
 export type CreateNodeRequest = z.infer<typeof CreateNodeRequestSchema>
 export type UpdateNodeRequest = z.infer<typeof UpdateNodeRequestSchema>
 export type NodeResponse = z.infer<typeof NodeResponseSchema>
+export type AuthTestResponse = z.infer<typeof AuthTestResponseSchema>
+export type NodeProbeResponse = z.infer<typeof NodeProbeResponseSchema>
+export type DiskInfo = z.infer<typeof DiskInfoSchema>

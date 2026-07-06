@@ -1,4 +1,5 @@
 .agentdocs/runtime/
+.codebuddy/
 .codegraph
 node_modules/
 dist/

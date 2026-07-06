@@ -1,5 +1,20 @@
-import { ArrowRight, FolderOpen, Pencil, Plus, RefreshCw, Trash2, Wifi, X } from "lucide-react"
-import type { FormEvent } from "react"
+import {
+  ArrowRight,
+  FileText,
+  FolderOpen,
+  Pencil,
+  Play,
+  Plus,
+  Power,
+  PowerOff,
+  RefreshCw,
+  RotateCw,
+  Search,
+  Trash2,
+  Wifi,
+  X,
+} from "lucide-react"
+import type { FormEvent as ReactFormEvent } from "react"
 import { useMemo, useState } from "react"
 import type { NodeResponse } from "../../shared/schemas/nodes"
 import type {
@@ -10,10 +25,17 @@ import type {
   UpdateShareRequest,
 } from "../../shared/schemas/shares"
 import {
+  applySharePlan,
   checkInterconnectivity,
+  checkShareHealth,
   createShare,
   deleteShare,
+  disableShare,
+  enableShare,
   errorMessage,
+  generateSharePlan,
+  getSharePlan,
+  remountShare,
   updateShare,
 } from "../api/client"
 import { PathBrowser } from "../components/path-browser"
@@ -30,17 +52,31 @@ const NFS_VERSION_OPTIONS = [
   { value: "4", label: "NFS 4" },
 ] as const
 
-const STATUS_LABELS: Record<ShareStatus, string> = {
+const STATUS_LABELS: Record<string, string> = {
   draft: "草稿",
+  planned: "已计划",
   applying: "应用中",
   active: "已生效",
+  degraded: "降级",
+  partial_failed: "部分失败",
+  disabled: "已禁用",
+  unmounted: "已卸载",
+  deleting: "删除中",
+  deleted: "已删除",
   failed: "失败",
 }
 
-const STATUS_TONES: Record<ShareStatus, "success" | "warning" | "error" | "info" | "neutral"> = {
+const STATUS_TONES: Record<string, "success" | "warning" | "error" | "info" | "neutral"> = {
   draft: "neutral",
+  planned: "info",
   applying: "info",
   active: "success",
+  degraded: "warning",
+  partial_failed: "error",
+  disabled: "warning",
+  unmounted: "neutral",
+  deleting: "info",
+  deleted: "neutral",
   failed: "error",
 }
 
@@ -107,24 +143,70 @@ type ShareFormProps = {
   readonly onCancelEdit: () => void
 }
 
+const PROBE_LABELS: Record<string, string> = {
+  unknown: "未测试",
+  ok: "端口可达",
+  failed: "连接失败",
+}
+
+const PROBE_TONES: Record<string, "success" | "warning" | "error" | "info" | "neutral"> = {
+  unknown: "warning",
+  ok: "success",
+  failed: "error",
+}
+
 function ShareForm({ editingShare, nodes, onCreated, onUpdated, onCancelEdit }: ShareFormProps) {
   const [draft, setDraft] = useState<ShareDraft>(() =>
     editingShare === null ? emptyShareDraft() : draftFromShare(editingShare),
   )
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [interconnectSummary, setInterconnectSummary] = useState<string | null>(null)
+  const [interconnectTone, setInterconnectTone] = useState<
+    "success" | "warning" | "error" | "info" | "neutral"
+  >("neutral")
+  const [checkingInterconnect, setCheckingInterconnect] = useState(false)
 
   const sourceOptions = nodeOptions(nodes.filter(canShareFrom), "选择源节点")
   const targetOptions = nodeOptions(nodes.filter(canMountTo), "选择目标节点")
   const hasNodeChoices = sourceOptions.length > 1 && targetOptions.length > 1
   const editing = editingShare !== null
+
+  const sourceNode = nodes.find((node) => node.id === draft.sourceNodeId) ?? null
+  const targetNode = nodes.find((node) => node.id === draft.targetNodeId) ?? null
+
+  const bothSelected = sourceNode !== null && targetNode !== null
+
   const ready =
     hasNodeChoices &&
     draft.name.trim().length > 0 &&
     draft.sourceNodeId.length > 0 &&
     draft.targetNodeId.length > 0
 
-  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
+  async function handleCheckInterconnect(): Promise<void> {
+    if (!bothSelected) {
+      return
+    }
+
+    setCheckingInterconnect(true)
+    setInterconnectSummary(null)
+
+    try {
+      const result = await checkInterconnectivity(sourceNode.id, targetNode.id)
+      setInterconnectSummary(result.summary)
+      const allOk = result.source.reachable === "ok" && result.target.reachable === "ok"
+      setInterconnectTone(
+        allOk && result.crossReachable === "ok" ? "success" : allOk ? "warning" : "error",
+      )
+    } catch (caught) {
+      setInterconnectSummary(await errorMessage(caught))
+      setInterconnectTone("error")
+    } finally {
+      setCheckingInterconnect(false)
+    }
+  }
+
+  async function submit(event: ReactFormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     if (!ready) {
       setError("请填写共享名称并选择源节点和目标节点。")
@@ -151,6 +233,7 @@ function ShareForm({ editingShare, nodes, onCreated, onUpdated, onCancelEdit }: 
         const share = await createShare(payload)
         onCreated(share)
         setDraft(emptyShareDraft())
+        setInterconnectSummary(null)
       }
     } catch (caught) {
       setError(await errorMessage(caught))
@@ -187,7 +270,10 @@ function ShareForm({ editingShare, nodes, onCreated, onUpdated, onCancelEdit }: 
         disabled={editing}
         label="源节点"
         name="sourceNodeId"
-        onChange={(sourceNodeId) => setDraft({ ...draft, sourceNodeId })}
+        onChange={(sourceNodeId) => {
+          setDraft({ ...draft, sourceNodeId })
+          setInterconnectSummary(null)
+        }}
         options={sourceOptions}
         value={draft.sourceNodeId}
       />
@@ -203,7 +289,10 @@ function ShareForm({ editingShare, nodes, onCreated, onUpdated, onCancelEdit }: 
         disabled={editing}
         label="目标节点"
         name="targetNodeId"
-        onChange={(targetNodeId) => setDraft({ ...draft, targetNodeId })}
+        onChange={(targetNodeId) => {
+          setDraft({ ...draft, targetNodeId })
+          setInterconnectSummary(null)
+        }}
         options={targetOptions}
         value={draft.targetNodeId}
       />
@@ -237,6 +326,39 @@ function ShareForm({ editingShare, nodes, onCreated, onUpdated, onCancelEdit }: 
         />
         <span>在目标节点写入自动挂载配置</span>
       </label>
+
+      {bothSelected ? (
+        <div className="interconnect-panel">
+          <div className="interconnect-header">
+            <span className="field-label">节点互通状态</span>
+            <Button
+              disabled={checkingInterconnect}
+              icon={RefreshCw}
+              onClick={handleCheckInterconnect}
+              type="button"
+              variant="secondary"
+            >
+              {checkingInterconnect ? "检测中" : "检测互通"}
+            </Button>
+          </div>
+          <div className="interconnect-nodes">
+            <StatusBadge tone={PROBE_TONES[sourceNode.lastProbeStatus] ?? "neutral"}>
+              <Wifi size={12} strokeWidth={1.8} />
+              {sourceNode.name} · {PROBE_LABELS[sourceNode.lastProbeStatus] ?? "未知"}
+            </StatusBadge>
+            <ArrowRight aria-hidden="true" size={14} strokeWidth={1.8} />
+            <StatusBadge tone={PROBE_TONES[targetNode.lastProbeStatus] ?? "neutral"}>
+              <Wifi size={12} strokeWidth={1.8} />
+              {targetNode.name} · {PROBE_LABELS[targetNode.lastProbeStatus] ?? "未知"}
+            </StatusBadge>
+          </div>
+          {interconnectSummary === null ? (
+            <p className="field-hint">点击「检测互通」验证两个节点之间的 NFS 网络连通性。</p>
+          ) : (
+            <StatusBadge tone={interconnectTone}>{interconnectSummary}</StatusBadge>
+          )}
+        </div>
+      ) : null}
 
       {hasNodeChoices ? null : <p className="form-error">需要至少一个共享端和一个挂载端节点。</p>}
       {error === null ? null : <p className="form-error">{error}</p>}
@@ -293,6 +415,9 @@ function ShareRow({ share, nodes, onDeleted, onEdit, onStatusChange }: ShareRowP
   const [deleting, setDeleting] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [statusError, setStatusError] = useState<string | null>(null)
+  const [planView, setPlanView] = useState<unknown | null>(null)
+  const [healthResult, setHealthResult] = useState<string | null>(null)
+  const [operating, setOperating] = useState(false)
 
   async function handleDelete(): Promise<void> {
     setDeleting(true)
@@ -308,18 +433,93 @@ function ShareRow({ share, nodes, onDeleted, onEdit, onStatusChange }: ShareRowP
     }
   }
 
-  async function cycleStatus(): Promise<void> {
-    const next = nextStatus(share.status)
-    if (next === null) {
-      return
-    }
-
+  async function handleGeneratePlan(): Promise<void> {
+    setOperating(true)
     setStatusError(null)
     try {
-      const updated = await updateShare(share.id, { status: next })
-      onStatusChange(updated)
+      const result = await generateSharePlan(share.id)
+      setPlanView(result.plan)
+      onStatusChange({ ...share, status: "planned" as ShareStatus })
     } catch (caught) {
       setStatusError(await errorMessage(caught))
+    } finally {
+      setOperating(false)
+    }
+  }
+
+  async function handleApplyPlan(): Promise<void> {
+    setOperating(true)
+    setStatusError(null)
+    try {
+      const planResult = await getSharePlan(share.id)
+      const result = await applySharePlan(share.id, planResult.plan.id)
+      if (result.allSucceeded) {
+        onStatusChange({ ...share, status: "active" as ShareStatus })
+      } else {
+        onStatusChange({ ...share, status: "partial_failed" as ShareStatus })
+      }
+    } catch (caught) {
+      setStatusError(await errorMessage(caught))
+    } finally {
+      setOperating(false)
+    }
+  }
+
+  async function handleHealthCheck(): Promise<void> {
+    setOperating(true)
+    setStatusError(null)
+    setHealthResult(null)
+    try {
+      const result = await checkShareHealth(share.id)
+      setHealthResult(result.health.summary)
+      const statusMap: Record<string, ShareStatus> = {
+        healthy: "active",
+        degraded: "degraded",
+        unhealthy: "partial_failed",
+      }
+      onStatusChange({ ...share, status: statusMap[result.health.status] ?? "degraded" })
+    } catch (caught) {
+      setStatusError(await errorMessage(caught))
+    } finally {
+      setOperating(false)
+    }
+  }
+
+  async function handleDisable(): Promise<void> {
+    setOperating(true)
+    setStatusError(null)
+    try {
+      await disableShare(share.id)
+      onStatusChange({ ...share, status: "disabled" as ShareStatus })
+    } catch (caught) {
+      setStatusError(await errorMessage(caught))
+    } finally {
+      setOperating(false)
+    }
+  }
+
+  async function handleEnable(): Promise<void> {
+    setOperating(true)
+    setStatusError(null)
+    try {
+      await enableShare(share.id)
+      onStatusChange({ ...share, status: "active" as ShareStatus })
+    } catch (caught) {
+      setStatusError(await errorMessage(caught))
+    } finally {
+      setOperating(false)
+    }
+  }
+
+  async function handleRemount(): Promise<void> {
+    setOperating(true)
+    setStatusError(null)
+    try {
+      await remountShare(share.id)
+    } catch (caught) {
+      setStatusError(await errorMessage(caught))
+    } finally {
+      setOperating(false)
     }
   }
 
@@ -350,22 +550,72 @@ function ShareRow({ share, nodes, onDeleted, onEdit, onStatusChange }: ShareRowP
             {share.accessMode === "read_write" ? "读写" : "只读"}
           </StatusBadge>
           {share.autoMount ? <StatusBadge tone="neutral">自动挂载</StatusBadge> : null}
-          <button
-            className="share-status-toggle"
-            disabled={nextStatus(share.status) === null || deleting}
-            onClick={() => void cycleStatus()}
-            title="推进状态"
-            type="button"
-          >
-            <StatusBadge tone={STATUS_TONES[share.status]}>
-              {STATUS_LABELS[share.status]}
-            </StatusBadge>
-          </button>
+          <StatusBadge tone={STATUS_TONES[share.status] ?? "neutral"}>
+            {STATUS_LABELS[share.status] ?? share.status}
+          </StatusBadge>
         </div>
         <div className="share-actions">
-          <Button icon={Pencil} onClick={onEdit} variant="secondary">
+          <Button disabled={operating} icon={Pencil} onClick={onEdit} variant="secondary">
             编辑
           </Button>
+          {share.status === "draft" ? (
+            <Button
+              disabled={operating}
+              icon={FileText}
+              onClick={() => void handleGeneratePlan()}
+              variant="primary"
+            >
+              {operating ? "生成中" : "生成计划"}
+            </Button>
+          ) : null}
+          {share.status === "planned" ? (
+            <Button
+              disabled={operating}
+              icon={Play}
+              onClick={() => void handleApplyPlan()}
+              variant="primary"
+            >
+              {operating ? "执行中" : "执行"}
+            </Button>
+          ) : null}
+          {share.status === "active" || share.status === "degraded" ? (
+            <>
+              <Button
+                disabled={operating}
+                icon={Search}
+                onClick={() => void handleHealthCheck()}
+                variant="secondary"
+              >
+                检查
+              </Button>
+              <Button
+                disabled={operating}
+                icon={RotateCw}
+                onClick={() => void handleRemount()}
+                variant="secondary"
+              >
+                重挂载
+              </Button>
+              <Button
+                disabled={operating}
+                icon={PowerOff}
+                onClick={() => void handleDisable()}
+                variant="secondary"
+              >
+                禁用
+              </Button>
+            </>
+          ) : null}
+          {share.status === "disabled" ? (
+            <Button
+              disabled={operating}
+              icon={Power}
+              onClick={() => void handleEnable()}
+              variant="primary"
+            >
+              恢复
+            </Button>
+          ) : null}
           {confirmingDelete ? (
             <>
               <Button
@@ -374,7 +624,7 @@ function ShareRow({ share, nodes, onDeleted, onEdit, onStatusChange }: ShareRowP
                 onClick={() => void handleDelete()}
                 variant="danger"
               >
-                {deleting ? "删除中" : "确认删除"}
+                {deleting ? "删除中" : "确认"}
               </Button>
               <Button
                 disabled={deleting}
@@ -390,6 +640,13 @@ function ShareRow({ share, nodes, onDeleted, onEdit, onStatusChange }: ShareRowP
             </Button>
           )}
         </div>
+        {planView !== null ? (
+          <div className="plan-preview">
+            <h4>执行计划</h4>
+            <pre>{JSON.stringify(planView, null, 2)}</pre>
+          </div>
+        ) : null}
+        {healthResult !== null ? <StatusBadge tone="info">{healthResult}</StatusBadge> : null}
         {statusError === null ? null : <p className="form-error">{statusError}</p>}
       </div>
     </article>
@@ -447,21 +704,6 @@ function nodeOptions(
 
 function nodeName(nodes: readonly NodeResponse[], id: string): string {
   return nodes.find((node) => node.id === id)?.name ?? id
-}
-
-function nextStatus(status: ShareStatus): ShareStatus | null {
-  switch (status) {
-    case "draft":
-      return "applying"
-    case "applying":
-      return "active"
-    case "active":
-      return "draft"
-    case "failed":
-      return "draft"
-    default:
-      return null
-  }
 }
 
 function canShareFrom(node: NodeResponse): boolean {

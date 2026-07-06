@@ -1,7 +1,7 @@
-import { KeyRound, Pencil, Server, ShieldCheck, Wifi } from "lucide-react"
+import { Fingerprint, KeyRound, Pencil, Search, Server, ShieldCheck, Wifi } from "lucide-react"
 import { useState } from "react"
 import type { NodeResponse } from "../../shared/schemas/nodes"
-import { errorMessage, testNodeConnection } from "../api/client"
+import { errorMessage, probeNode, testNodeAuth, testNodeConnection } from "../api/client"
 import { Button, StatusBadge } from "../components/primitives"
 
 const ROLE_LABELS = {
@@ -48,6 +48,8 @@ export function NodeList({ nodes, editingNodeId, onEdit, onTested }: NodeListPro
     readonly nodeId: string
     readonly message: string
   } | null>(null)
+  const [probingNodeId, setProbingNodeId] = useState<string | null>(null)
+  const [probeResult, setProbeResult] = useState<Record<string, unknown> | null>(null)
 
   async function testNode(node: NodeResponse): Promise<void> {
     setTestingNodeId(node.id)
@@ -65,6 +67,41 @@ export function NodeList({ nodes, editingNodeId, onEdit, onTested }: NodeListPro
     }
   }
 
+  async function authTest(node: NodeResponse): Promise<void> {
+    setTestingNodeId(node.id)
+    setTestError(null)
+    try {
+      await testNodeAuth(node.id)
+      const tested = await testNodeConnection(node.id)
+      onTested(tested)
+    } catch (caught) {
+      if (!(caught instanceof Error)) {
+        throw caught
+      }
+      setTestError({ nodeId: node.id, message: await errorMessage(caught) })
+    } finally {
+      setTestingNodeId(null)
+    }
+  }
+
+  async function fullProbe(node: NodeResponse): Promise<void> {
+    setProbingNodeId(node.id)
+    setTestError(null)
+    setProbeResult(null)
+    try {
+      const result = await probeNode(node.id)
+      onTested(result.node)
+      setProbeResult({ ...result.probe, nodeId: node.id })
+    } catch (caught) {
+      if (!(caught instanceof Error)) {
+        throw caught
+      }
+      setTestError({ nodeId: node.id, message: await errorMessage(caught) })
+    } finally {
+      setProbingNodeId(null)
+    }
+  }
+
   if (nodes.length === 0) {
     return (
       <div className="empty-state">
@@ -77,17 +114,87 @@ export function NodeList({ nodes, editingNodeId, onEdit, onTested }: NodeListPro
   return (
     <div className="node-list">
       {nodes.map((node) => (
-        <NodeRow
-          errorMessage={testError?.nodeId === node.id ? testError.message : null}
-          editing={editingNodeId === node.id}
-          key={node.id}
-          node={node}
-          onEdit={() => onEdit(node)}
-          onTest={() => void testNode(node)}
-          testing={testingNodeId === node.id}
-          testingDisabled={testingNodeId !== null}
-        />
+        <div key={node.id}>
+          <NodeRow
+            errorMessage={testError?.nodeId === node.id ? testError.message : null}
+            editing={editingNodeId === node.id}
+            node={node}
+            onEdit={() => onEdit(node)}
+            onTest={() => void testNode(node)}
+            onAuthTest={() => void authTest(node)}
+            onProbe={() => void fullProbe(node)}
+            probing={probingNodeId === node.id}
+            testing={testingNodeId === node.id}
+            testingDisabled={testingNodeId !== null || probingNodeId !== null}
+          />
+          {probeResult !== null && (probeResult as Record<string, unknown>).nodeId === node.id ? (
+            <ProbeDetail result={probeResult as Record<string, unknown>} />
+          ) : null}
+        </div>
       ))}
+    </div>
+  )
+}
+
+function ProbeDetail({ result }: { readonly result: Record<string, unknown> }) {
+  return (
+    <div className="probe-detail">
+      <h4>探测结果</h4>
+      <dl>
+        <ProbeItem label="SSH 认证" ok={result.sshOk as boolean} />
+        <ProbeItem
+          label="sudo 权限"
+          ok={result.sudoOk as boolean}
+          detail={result.sudoError as string | null}
+        />
+        <ProbeItem
+          label="systemd"
+          ok={result.systemdOk as boolean}
+          detail={result.systemdState as string | null}
+        />
+        <ProbeItem label="NFS Server" ok={result.nfsServerInstalled as boolean} />
+        <ProbeItem label="NFS Client" ok={result.nfsClientInstalled as boolean} />
+        {result.osPrettyName ? (
+          <div className="probe-row">
+            <dt>操作系统</dt>
+            <dd>{result.osPrettyName as string}</dd>
+          </div>
+        ) : null}
+        {result.firewallType ? (
+          <div className="probe-row">
+            <dt>防火墙</dt>
+            <dd>
+              {result.firewallType as string} ({result.firewallActive ? "运行中" : "未激活"})
+            </dd>
+          </div>
+        ) : null}
+        {result.primaryIp ? (
+          <div className="probe-row">
+            <dt>主 IP</dt>
+            <dd>{result.primaryIp as string}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </div>
+  )
+}
+
+function ProbeItem({
+  label,
+  ok,
+  detail,
+}: {
+  readonly label: string
+  readonly ok: boolean
+  readonly detail?: string | null
+}) {
+  return (
+    <div className="probe-row">
+      <dt>
+        <StatusBadge tone={ok ? "success" : "error"}>{ok ? "OK" : "FAIL"}</StatusBadge>
+        {label}
+      </dt>
+      <dd>{detail ?? (ok ? "正常" : "不可用")}</dd>
     </div>
   )
 }
@@ -98,6 +205,9 @@ function NodeRow({
   errorMessage,
   onEdit,
   onTest,
+  onAuthTest,
+  onProbe,
+  probing,
   testing,
   testingDisabled,
 }: {
@@ -106,6 +216,9 @@ function NodeRow({
   readonly errorMessage: string | null
   readonly onEdit: () => void
   readonly onTest: () => void
+  readonly onAuthTest: () => void
+  readonly onProbe: () => void
+  readonly probing: boolean
   readonly testing: boolean
   readonly testingDisabled: boolean
 }) {
@@ -143,7 +256,18 @@ function NodeRow({
           编辑
         </Button>
         <Button disabled={testingDisabled} icon={Wifi} onClick={onTest} variant="secondary">
-          {testing ? "测试中" : "测试"}
+          {testing ? "TCP" : "TCP"}
+        </Button>
+        <Button
+          disabled={testingDisabled}
+          icon={Fingerprint}
+          onClick={onAuthTest}
+          variant="secondary"
+        >
+          {testing ? "认证" : "认证"}
+        </Button>
+        <Button disabled={testingDisabled} icon={Search} onClick={onProbe} variant="primary">
+          {probing ? "探测中" : "完整探测"}
         </Button>
       </div>
       {errorMessage === null ? null : <p className="node-test-message">{errorMessage}</p>}
