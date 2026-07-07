@@ -1,6 +1,7 @@
 import { serve } from "bun"
 import { createApp } from "./app"
 import { loadConfig } from "./config"
+import { logger } from "./logger"
 
 const config = loadConfig()
 const app = createApp({ config })
@@ -11,4 +12,4 @@ serve({
   fetch: app.fetch,
 })
 
-console.info(`Linux Share Manager API listening on http://${config.host}:${config.port}`)
+logger.info({ host: config.host, port: config.port }, "Linux Share Manager API server started")

@@ -137,10 +137,20 @@ export function migrateDatabase(sqlite: Database): void {
   addNodeColumnIfMissing(sqlite, "credential_label", "TEXT")
   addNodeColumnIfMissing(sqlite, "os_version", "TEXT")
   addNodeColumnIfMissing(sqlite, "last_probe_summary", "TEXT")
+  addSharePlanColumnIfMissing(sqlite, "results_json", "TEXT")
 }
 
 type TableColumnRow = {
   readonly name: string
+}
+
+function addSharePlanColumnIfMissing(sqlite: Database, name: string, definition: string): void {
+  const columns = sqlite.query<TableColumnRow, []>("PRAGMA table_info(share_plans)").all()
+  if (columns.some((column) => column.name === name)) {
+    return
+  }
+
+  sqlite.exec(`ALTER TABLE share_plans ADD COLUMN ${name} ${definition}`)
 }
 
 function addNodeColumnIfMissing(sqlite: Database, name: string, definition: string): void {

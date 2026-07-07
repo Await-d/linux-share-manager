@@ -112,6 +112,10 @@
   color: var(--status-error);
 }
 
+.form-success {
+  color: var(--status-success);
+}
+
 .auth-form {
   gap: var(--space-4);
 }

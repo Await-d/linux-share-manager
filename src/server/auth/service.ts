@@ -3,6 +3,7 @@ import type { AppConfig } from "../config"
 import type { AppDatabase } from "../db/client"
 import { sessions, users } from "../db/schema"
 import { AppError, DatabaseInvariantError } from "../errors"
+import { logger } from "../logger"
 import type { AuthenticatedUser, SessionRecord } from "./types"
 
 type AuthServiceOptions = {
@@ -41,6 +42,7 @@ export class AuthService {
       throw new DatabaseInvariantError("user insert returned no row")
     }
 
+    logger.info({ username }, "admin initialized")
     return this.createSession({ id: user.id, username: user.username })
   }
 
@@ -54,11 +56,13 @@ export class AuthService {
       .at(0)
 
     if (found === undefined) {
+      logger.warn({ username }, "login failed: user not found")
       throw new AppError("INVALID_CREDENTIALS", "Invalid username or password.", 401)
     }
 
     const valid = await Bun.password.verify(password, found.passwordHash)
     if (!valid) {
+      logger.warn({ username }, "login failed: invalid password")
       throw new AppError("INVALID_CREDENTIALS", "Invalid username or password.", 401)
     }
 
@@ -68,6 +72,7 @@ export class AuthService {
       .where(eq(users.id, found.id))
       .run()
 
+    logger.info({ username }, "login succeeded")
     return this.createSession({ id: found.id, username: found.username })
   }
 
@@ -103,6 +108,7 @@ export class AuthService {
 
   logout(sessionId: string): void {
     this.options.database.db.delete(sessions).where(eq(sessions.id, sessionId)).run()
+    logger.info({ sessionId: sessionId.slice(0, 8) }, "session logged out")
   }
 
   private createSession(user: AuthenticatedUser): SessionRecord {

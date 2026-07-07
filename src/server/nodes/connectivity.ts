@@ -1,4 +1,5 @@
 import { createConnection } from "node:net"
+import { logger } from "../logger"
 
 type ConnectionTarget = {
   readonly host: string
@@ -17,6 +18,11 @@ export async function testTcpConnection(target: ConnectionTarget): Promise<boole
       }
       settled = true
       socket.destroy()
+      if (reachable) {
+        logger.debug({ host: target.host, port: target.port }, "tcp connection test: reachable")
+      } else {
+        logger.warn({ host: target.host, port: target.port }, "tcp connection test: unreachable")
+      }
       resolve(reachable)
     }
 

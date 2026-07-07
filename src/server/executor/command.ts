@@ -10,6 +10,20 @@ export type CommandSpec = {
   readonly timeoutMs: number
   readonly preview: string
   readonly sensitive?: boolean
+  readonly sudoPasswordRequired?: boolean
+  readonly sudoPassword?: string
+}
+
+export type CommandLogSummary = {
+  readonly commandIndex?: number
+  readonly executable: string
+  readonly preview: string
+  readonly sudo: boolean
+  readonly sudoPasswordRequired: boolean
+  readonly passwordInjected: boolean
+  readonly sudoPasswordMode: "stdin" | "none"
+  readonly timeoutMs: number
+  readonly sensitive: boolean
 }
 
 export type CommandResult = {
@@ -36,12 +50,16 @@ export function shellEscape(arg: string): string {
 
 /**
  * Build a shell-safe command string from a CommandSpec.
- * For sudo commands, wraps with `sudo -n` (non-interactive).
+ * Password-backed sudo reads from stdin; passwordless sudo fails fast with `-n`.
  */
 export function buildCommand(spec: CommandSpec): string {
   const parts: string[] = []
   if (spec.sudo) {
-    parts.push("sudo", "-n")
+    if (spec.sudoPassword !== undefined) {
+      parts.push("sudo", "-S", "-p", "''")
+    } else {
+      parts.push("sudo", "-n")
+    }
   }
   parts.push(spec.executable)
   for (const arg of spec.args) {
@@ -56,6 +74,30 @@ export function buildCommand(spec: CommandSpec): string {
  */
 export function buildPreview(spec: CommandSpec): string {
   return spec.preview
+}
+
+export function shouldAttachSudoPassword(spec: CommandSpec): boolean {
+  return spec.sudo || spec.sudoPasswordRequired === true
+}
+
+export function summarizeCommandForLog(
+  spec: CommandSpec,
+  commandIndex?: number,
+): CommandLogSummary {
+  const sudoPasswordMode: CommandLogSummary["sudoPasswordMode"] =
+    spec.sudoPassword !== undefined ? "stdin" : "none"
+  const summary: Omit<CommandLogSummary, "commandIndex"> = {
+    executable: spec.executable,
+    preview: spec.sensitive === true ? "[敏感命令已隐藏]" : spec.preview,
+    sudo: spec.sudo,
+    sudoPasswordRequired: spec.sudo || spec.sudoPasswordRequired === true,
+    passwordInjected: spec.sudoPassword !== undefined,
+    sudoPasswordMode,
+    timeoutMs: spec.timeoutMs,
+    sensitive: spec.sensitive === true,
+  }
+
+  return commandIndex === undefined ? summary : { commandIndex, ...summary }
 }
 
 /**

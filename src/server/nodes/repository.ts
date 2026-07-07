@@ -4,6 +4,7 @@ import { decryptCredentialSecret, encryptCredentialSecret } from "../credentials
 import type { AppDatabase } from "../db/client"
 import { nodeProbeResults, nodes } from "../db/schema"
 import { AppError, DatabaseInvariantError } from "../errors"
+import { logger } from "../logger"
 import type { NodeProbeResult } from "./probe"
 
 export type NodeCredential = {
@@ -68,7 +69,12 @@ export class NodeRepository {
       throw new DatabaseInvariantError("node insert returned no row")
     }
 
-    return toNodeResponse(row)
+    const node = toNodeResponse(row)
+    logger.info(
+      { nodeId: node.id, nodeName: node.name, host: node.host },
+      "node created in repository",
+    )
+    return node
   }
 
   update(id: string, input: UpdateNodeRequest): NodeResponse | null {
@@ -121,7 +127,9 @@ export class NodeRepository {
       throw new DatabaseInvariantError("node update returned no row")
     }
 
-    return toNodeResponse(row)
+    const node = toNodeResponse(row)
+    logger.info({ nodeId: node.id, nodeName: node.name }, "node updated in repository")
+    return node
   }
 
   list(): readonly NodeResponse[] {
@@ -148,6 +156,11 @@ export class NodeRepository {
   saveProbeResult(id: string, result: NodeProbeResult): NodeResponse | null {
     const now = new Date()
     const summary = buildProbeSummary(result)
+
+    logger.info(
+      { nodeId: id, osFamily: result.osFamily, sshOk: result.sshOk, sudoOk: result.sudoOk },
+      "saving probe result to repository",
+    )
 
     // Update node with probe info
     const updated = this.database.db
@@ -348,6 +361,7 @@ function missingCredential(): CredentialWrite {
 
 function encryptedSecret(secret: string, secretKey: string | undefined): string {
   if (secretKey === undefined) {
+    logger.error("LSM_SECRET_KEY not set, cannot encrypt SSH credential")
     throw new AppError(
       "CREDENTIAL_KEY_REQUIRED",
       "LSM_SECRET_KEY is required to save SSH credentials.",
@@ -369,6 +383,7 @@ function resolveDecryptedSecret(row: NodeRow, secretKey: string | undefined): st
   }
 
   if (secretKey === undefined) {
+    logger.error("LSM_SECRET_KEY not set, cannot decrypt SSH credential")
     throw new AppError(
       "CREDENTIAL_KEY_REQUIRED",
       "LSM_SECRET_KEY is required to decrypt SSH credentials.",

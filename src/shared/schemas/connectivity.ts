@@ -14,6 +14,13 @@ export const InterconnectivityResponseSchema = z.object({
   source: NodeEndpointSchema,
   target: NodeEndpointSchema,
   crossReachable: ReachableStatusSchema,
+  nfsPort: z.number().int().nullable(),
+  mountStatus: z.enum(["unknown", "mounted", "not_mounted"]).default("unknown"),
+  readTest: z.enum(["unknown", "ok", "failed"]).default("unknown"),
+  writeTest: z.enum(["unknown", "ok", "failed"]).default("unknown"),
+  mountDetail: z.string().nullable().default(null),
+  exportStatus: z.enum(["unknown", "ok", "not_exported"]).default("unknown"),
+  exportDetail: z.string().nullable().default(null),
   summary: z.string(),
 })
 

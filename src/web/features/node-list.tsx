@@ -1,8 +1,9 @@
 import { Fingerprint, KeyRound, Pencil, Search, Server, ShieldCheck, Wifi } from "lucide-react"
 import { useState } from "react"
-import type { NodeResponse } from "../../shared/schemas/nodes"
+import type { NodeProbeResponse, NodeResponse } from "../../shared/schemas/nodes"
 import { errorMessage, probeNode, testNodeAuth, testNodeConnection } from "../api/client"
 import { Button, StatusBadge } from "../components/primitives"
+import { ProbeDetail } from "./probe-detail"
 
 const ROLE_LABELS = {
   source: "共享端",
@@ -27,13 +28,14 @@ const PROBE_LABELS = {
   failed: "连接失败",
 } as const
 
-type StatusTone = "success" | "warning" | "error" | "info" | "neutral"
-
 const PROBE_TONES = {
   unknown: "neutral",
   ok: "success",
   failed: "error",
-} satisfies Record<NodeResponse["lastProbeStatus"], StatusTone>
+} satisfies Record<
+  NodeResponse["lastProbeStatus"],
+  "success" | "warning" | "error" | "info" | "neutral"
+>
 
 type NodeListProps = {
   readonly nodes: readonly NodeResponse[]
@@ -49,7 +51,7 @@ export function NodeList({ nodes, editingNodeId, onEdit, onTested }: NodeListPro
     readonly message: string
   } | null>(null)
   const [probingNodeId, setProbingNodeId] = useState<string | null>(null)
-  const [probeResult, setProbeResult] = useState<Record<string, unknown> | null>(null)
+  const [probeResult, setProbeResult] = useState<NodeProbeResponse | null>(null)
 
   async function testNode(node: NodeResponse): Promise<void> {
     setTestingNodeId(node.id)
@@ -91,7 +93,7 @@ export function NodeList({ nodes, editingNodeId, onEdit, onTested }: NodeListPro
     try {
       const result = await probeNode(node.id)
       onTested(result.node)
-      setProbeResult({ ...result.probe, nodeId: node.id })
+      setProbeResult(result.probe)
     } catch (caught) {
       if (!(caught instanceof Error)) {
         throw caught
@@ -127,74 +129,11 @@ export function NodeList({ nodes, editingNodeId, onEdit, onTested }: NodeListPro
             testing={testingNodeId === node.id}
             testingDisabled={testingNodeId !== null || probingNodeId !== null}
           />
-          {probeResult !== null && (probeResult as Record<string, unknown>).nodeId === node.id ? (
-            <ProbeDetail result={probeResult as Record<string, unknown>} />
+          {probeResult !== null && probeResult.nodeId === node.id ? (
+            <ProbeDetail result={probeResult} />
           ) : null}
         </div>
       ))}
-    </div>
-  )
-}
-
-function ProbeDetail({ result }: { readonly result: Record<string, unknown> }) {
-  return (
-    <div className="probe-detail">
-      <h4>探测结果</h4>
-      <dl>
-        <ProbeItem label="SSH 认证" ok={result.sshOk as boolean} />
-        <ProbeItem
-          label="sudo 权限"
-          ok={result.sudoOk as boolean}
-          detail={result.sudoError as string | null}
-        />
-        <ProbeItem
-          label="systemd"
-          ok={result.systemdOk as boolean}
-          detail={result.systemdState as string | null}
-        />
-        <ProbeItem label="NFS Server" ok={result.nfsServerInstalled as boolean} />
-        <ProbeItem label="NFS Client" ok={result.nfsClientInstalled as boolean} />
-        {result.osPrettyName ? (
-          <div className="probe-row">
-            <dt>操作系统</dt>
-            <dd>{result.osPrettyName as string}</dd>
-          </div>
-        ) : null}
-        {result.firewallType ? (
-          <div className="probe-row">
-            <dt>防火墙</dt>
-            <dd>
-              {result.firewallType as string} ({result.firewallActive ? "运行中" : "未激活"})
-            </dd>
-          </div>
-        ) : null}
-        {result.primaryIp ? (
-          <div className="probe-row">
-            <dt>主 IP</dt>
-            <dd>{result.primaryIp as string}</dd>
-          </div>
-        ) : null}
-      </dl>
-    </div>
-  )
-}
-
-function ProbeItem({
-  label,
-  ok,
-  detail,
-}: {
-  readonly label: string
-  readonly ok: boolean
-  readonly detail?: string | null
-}) {
-  return (
-    <div className="probe-row">
-      <dt>
-        <StatusBadge tone={ok ? "success" : "error"}>{ok ? "OK" : "FAIL"}</StatusBadge>
-        {label}
-      </dt>
-      <dd>{detail ?? (ok ? "正常" : "不可用")}</dd>
     </div>
   )
 }

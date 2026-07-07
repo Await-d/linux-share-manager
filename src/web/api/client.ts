@@ -140,9 +140,48 @@ export async function deleteShare(id: string): Promise<void> {
   await api.delete(`shares/${id}`)
 }
 
-export async function generateSharePlan(id: string): Promise<{ plan: PlanResponse }> {
-  const PlanEnvelopeSchema = z.object({ plan: PlanResponseSchema })
-  return PlanEnvelopeSchema.parse(await api.post(`shares/${id}/plan`).json())
+const NfsPortInfoSchema = z.object({
+  listeningPorts: z.array(z.number()),
+  primaryPort: z.number().nullable(),
+  defaultPortOk: z.boolean(),
+  anyPortListening: z.boolean(),
+  rawSsOutput: z.string().nullable(),
+})
+
+const NfsVersionInfoSchema = z.object({
+  supportedVersions: z.array(z.enum(["3", "4", "4.1", "4.2"])),
+  preferredVersion: z.enum(["3", "4", "4.1", "4.2"]).nullable(),
+  rawVersionsOutput: z.string().nullable(),
+})
+
+const PreCheckSchema = z.object({
+  passed: z.boolean(),
+  sourceSshOk: z.boolean(),
+  targetSshOk: z.boolean(),
+  sourceSudoOk: z.boolean().default(false),
+  targetSudoOk: z.boolean().default(false),
+  nfsPort2049Ok: z.boolean(),
+  nfsPortInfo: NfsPortInfoSchema,
+  nfsVersionInfo: NfsVersionInfoSchema,
+  nfsServerInstalled: z.boolean(),
+  nfsClientInstalled: z.boolean(),
+  nfsServerRunning: z.boolean(),
+  warnings: z.array(z.string()),
+  errors: z.array(z.string()),
+  summary: z.string(),
+})
+
+export type PreCheckResponse = z.infer<typeof PreCheckSchema>
+export type NfsPortInfo = z.infer<typeof NfsPortInfoSchema>
+
+export async function generateSharePlan(
+  id: string,
+): Promise<{ plan: PlanResponse; preCheck?: PreCheckResponse | undefined }> {
+  const PlanEnvelopeSchema = z.object({
+    plan: PlanResponseSchema,
+    preCheck: PreCheckSchema.optional(),
+  })
+  return PlanEnvelopeSchema.parse(await api.post(`shares/${id}/plan`, { timeout: 120_000 }).json())
 }
 
 export async function getSharePlan(id: string): Promise<{ plan: PlanResponse }> {
@@ -154,7 +193,7 @@ export async function applySharePlan(
   shareId: string,
   planId: string,
 ): Promise<{
-  results: readonly { stepKey: string; status: string; error?: string }[]
+  results: readonly { stepKey: string; status: string; error?: string | undefined }[]
   allSucceeded: boolean
 }> {
   const ApplyResponseSchema = z.object({
@@ -164,13 +203,15 @@ export async function applySharePlan(
     allSucceeded: z.boolean(),
   })
   return ApplyResponseSchema.parse(
-    await api.post(`shares/${shareId}/apply`, { json: { planId } }).json(),
+    await api.post(`shares/${shareId}/apply`, { json: { planId }, timeout: 120_000 }).json(),
   )
 }
 
 export async function checkShareHealth(shareId: string): Promise<{ health: HealthCheckResponse }> {
   const HealthEnvelopeSchema = z.object({ health: HealthCheckResponseSchema })
-  return HealthEnvelopeSchema.parse(await api.post(`shares/${shareId}/check`).json())
+  return HealthEnvelopeSchema.parse(
+    await api.post(`shares/${shareId}/check`, { timeout: 60_000 }).json(),
+  )
 }
 
 export async function getShareHealthChecks(
@@ -181,15 +222,21 @@ export async function getShareHealthChecks(
 }
 
 export async function disableShare(shareId: string): Promise<{ status: string }> {
-  return z.object({ status: z.string() }).parse(await api.post(`shares/${shareId}/disable`).json())
+  return z
+    .object({ status: z.string() })
+    .parse(await api.post(`shares/${shareId}/disable`, { timeout: 60_000 }).json())
 }
 
 export async function enableShare(shareId: string): Promise<{ status: string }> {
-  return z.object({ status: z.string() }).parse(await api.post(`shares/${shareId}/enable`).json())
+  return z
+    .object({ status: z.string() })
+    .parse(await api.post(`shares/${shareId}/enable`, { timeout: 60_000 }).json())
 }
 
 export async function remountShare(shareId: string): Promise<{ status: string }> {
-  return z.object({ status: z.string() }).parse(await api.post(`shares/${shareId}/remount`).json())
+  return z
+    .object({ status: z.string() })
+    .parse(await api.post(`shares/${shareId}/remount`, { timeout: 60_000 }).json())
 }
 
 export async function getAuditLogs(): Promise<{ logs: readonly unknown[] }> {
@@ -200,10 +247,21 @@ export async function getAuditLogs(): Promise<{ logs: readonly unknown[] }> {
 export async function checkInterconnectivity(
   sourceId: string,
   targetId: string,
+  options?: { readonly sourcePath?: string; readonly targetPath?: string },
 ): Promise<InterconnectivityResponse> {
-  return InterconnectivityResponseSchema.parse(
-    await api.get(`interconnect/${sourceId}/${targetId}`).json(),
-  )
+  const searchParams = new URLSearchParams()
+  if (options?.sourcePath) {
+    searchParams.set("sourcePath", options.sourcePath)
+  }
+  if (options?.targetPath) {
+    searchParams.set("targetPath", options.targetPath)
+  }
+  const query = searchParams.toString()
+  const url =
+    query.length > 0
+      ? `interconnect/${sourceId}/${targetId}?${query}`
+      : `interconnect/${sourceId}/${targetId}`
+  return InterconnectivityResponseSchema.parse(await api.get(url, { timeout: 60_000 }).json())
 }
 
 export async function browseDirectories(nodeId: string, path: string): Promise<BrowseResponse> {

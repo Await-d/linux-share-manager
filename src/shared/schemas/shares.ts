@@ -1,6 +1,7 @@
 import { z } from "zod"
 
 const ShareAccessModeSchema = z.enum(["read_only", "read_write"])
+const NfsVersionSchema = z.enum(["auto", "3", "4", "4.1", "4.2"])
 const ShareStatusSchema = z.enum([
   "draft",
   "planned",
@@ -28,7 +29,7 @@ export const CreateShareRequestSchema = z.object({
   targetNodeId: z.uuid(),
   targetPath: AbsoluteLinuxPathSchema,
   accessMode: ShareAccessModeSchema,
-  nfsVersion: z.enum(["4", "4.1", "4.2"]).default("4.2"),
+  nfsVersion: NfsVersionSchema.default("auto"),
   autoMount: z.boolean().default(true),
 })
 
@@ -37,7 +38,7 @@ export const UpdateShareRequestSchema = z.object({
   sourcePath: AbsoluteLinuxPathSchema.optional(),
   targetPath: AbsoluteLinuxPathSchema.optional(),
   accessMode: ShareAccessModeSchema.optional(),
-  nfsVersion: z.enum(["4", "4.1", "4.2"]).optional(),
+  nfsVersion: NfsVersionSchema.optional(),
   autoMount: z.boolean().optional(),
   status: ShareStatusSchema.optional(),
 })
@@ -62,6 +63,9 @@ export const PlanResponseSchema = z.object({
   status: z.string(),
   riskLevel: z.string(),
   plan: z.unknown(),
+  results: z
+    .array(z.object({ stepKey: z.string(), status: z.string(), error: z.string().optional() }))
+    .default([]),
   createdBy: z.string().nullable(),
   confirmedAt: z.string().nullable(),
   createdAt: z.string(),

@@ -7,6 +7,7 @@ import type {
 import type { AppDatabase } from "../db/client"
 import { nodes, shares } from "../db/schema"
 import { AppError, DatabaseInvariantError } from "../errors"
+import { logger } from "../logger"
 
 export class ShareRepository {
   constructor(private readonly database: AppDatabase) {}
@@ -14,9 +15,14 @@ export class ShareRepository {
   create(input: CreateShareRequest): ShareResponse {
     const source = this.findNode(input.sourceNodeId)
     if (source === null) {
+      logger.warn({ sourceNodeId: input.sourceNodeId }, "共享创建失败：源节点不存在")
       throw new AppError("SOURCE_NODE_NOT_FOUND", "The source node does not exist.", 404)
     }
     if (!canShareFrom(source.role)) {
+      logger.warn(
+        { sourceNodeId: input.sourceNodeId, role: source.role },
+        "共享创建失败：源节点角色不能发布共享",
+      )
       throw new AppError(
         "INVALID_SOURCE_NODE",
         "The source node cannot publish shared directories.",
@@ -26,9 +32,14 @@ export class ShareRepository {
 
     const target = this.findNode(input.targetNodeId)
     if (target === null) {
+      logger.warn({ targetNodeId: input.targetNodeId }, "共享创建失败：目标节点不存在")
       throw new AppError("TARGET_NODE_NOT_FOUND", "The target node does not exist.", 404)
     }
     if (!canMountTo(target.role)) {
+      logger.warn(
+        { targetNodeId: input.targetNodeId, role: target.role },
+        "共享创建失败：目标节点角色不能挂载共享",
+      )
       throw new AppError(
         "INVALID_TARGET_NODE",
         "The target node cannot mount shared directories.",
@@ -61,7 +72,23 @@ export class ShareRepository {
       throw new DatabaseInvariantError("share insert returned no row")
     }
 
-    return toShareResponse(row)
+    const share = toShareResponse(row)
+    logger.info(
+      {
+        shareId: share.id,
+        shareName: share.name,
+        sourceNodeId: share.sourceNodeId,
+        sourcePath: share.sourcePath,
+        targetNodeId: share.targetNodeId,
+        targetPath: share.targetPath,
+        accessMode: share.accessMode,
+        nfsVersion: share.nfsVersion,
+        autoMount: share.autoMount,
+        status: share.status,
+      },
+      "共享已写入仓库",
+    )
+    return share
   }
 
   list(): readonly ShareResponse[] {
@@ -119,12 +146,26 @@ export class ShareRepository {
       throw new DatabaseInvariantError("share update returned no row")
     }
 
-    return toShareResponse(row)
+    const share = toShareResponse(row)
+    logger.info(
+      {
+        shareId: share.id,
+        shareName: share.name,
+        status: share.status,
+        updatedFields: Object.keys(input),
+      },
+      "共享已更新到仓库",
+    )
+    return share
   }
 
   delete(id: string): boolean {
     const result = this.database.db.delete(shares).where(eq(shares.id, id)).returning().all()
-    return result.length > 0
+    const deleted = result.length > 0
+    if (deleted) {
+      logger.info({ shareId: id }, "共享已从仓库删除")
+    }
+    return deleted
   }
 
   private findNode(id: string): Pick<NodeRow, "id" | "role"> | null {

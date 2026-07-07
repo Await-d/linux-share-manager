@@ -1,5 +1,6 @@
 import { Client, type ConnectConfig } from "ssh2"
 import { AppError } from "../errors"
+import { logger } from "../logger"
 import type { NodeCredential } from "../nodes/repository"
 import {
   buildCommand,
@@ -7,6 +8,7 @@ import {
   type CommandSpec,
   type ExecutedStep,
   sanitizeOutput,
+  summarizeCommandForLog,
 } from "./command"
 
 export type SshExecutorOptions = {
@@ -37,10 +39,35 @@ export async function executeCommand(
   const conn = new Client()
   const startedAt = new Date()
 
+  logger.info(
+    {
+      host: credential.host,
+      port: credential.port,
+      username: credential.username,
+      authType: credential.authType,
+      command: summarizeCommandForLog(spec),
+      connectTimeoutMs: options.connectTimeoutMs,
+    },
+    "SSH 命令开始执行",
+  )
+
   try {
     await connectSsh(conn, credential, credential.decryptedSecret, options.connectTimeoutMs)
     const result = await runCommand(conn, spec, options)
     const finishedAt = new Date()
+
+    logger.info(
+      {
+        host: credential.host,
+        command: summarizeCommandForLog(spec),
+        exitCode: result.exitCode,
+        timedOut: result.timedOut,
+        stdoutBytes: Buffer.byteLength(result.stdout, "utf8"),
+        stderrBytes: Buffer.byteLength(result.stderr, "utf8"),
+        durationMs: finishedAt.getTime() - startedAt.getTime(),
+      },
+      "SSH 命令执行完成",
+    )
 
     return {
       spec,
@@ -74,11 +101,38 @@ export async function executeCommands(
   const conn = new Client()
   const results: ExecutedStep[] = []
 
+  logger.info(
+    {
+      host: credential.host,
+      port: credential.port,
+      username: credential.username,
+      authType: credential.authType,
+      commandCount: specs.length,
+      sudoCommandCount: specs.filter((spec) => spec.sudo).length,
+      passwordInjectedCount: specs.filter((spec) => spec.sudoPassword !== undefined).length,
+      connectTimeoutMs: options.connectTimeoutMs,
+      defaultCommandTimeoutMs: options.defaultCommandTimeoutMs,
+      maxOutputBytes: options.maxOutputBytes,
+    },
+    "SSH 批量命令开始执行",
+  )
+
   try {
     await connectSsh(conn, credential, credential.decryptedSecret, options.connectTimeoutMs)
 
-    for (const spec of specs) {
+    logger.info(
+      { host: credential.host, commandCount: specs.length },
+      "SSH 连接已建立，开始按顺序执行命令",
+    )
+
+    for (const [index, spec] of specs.entries()) {
       const startedAt = new Date()
+      const commandIndex = index + 1
+      const commandSummary = summarizeCommandForLog(spec, commandIndex)
+      logger.info(
+        { host: credential.host, totalCommands: specs.length, command: commandSummary },
+        "SSH 子命令开始执行",
+      )
       try {
         const result = await runCommand(conn, spec, options)
         const finishedAt = new Date()
@@ -93,9 +147,32 @@ export async function executeCommands(
           startedAt,
           finishedAt,
         })
+        logger.info(
+          {
+            host: credential.host,
+            totalCommands: specs.length,
+            command: commandSummary,
+            exitCode: result.exitCode,
+            timedOut: result.timedOut,
+            stdoutBytes: Buffer.byteLength(result.stdout, "utf8"),
+            stderrBytes: Buffer.byteLength(result.stderr, "utf8"),
+            durationMs: finishedAt.getTime() - startedAt.getTime(),
+          },
+          "SSH 子命令执行完成",
+        )
       } catch (error) {
         const finishedAt = new Date()
         const message = error instanceof Error ? error.message : String(error)
+        logger.warn(
+          {
+            host: credential.host,
+            totalCommands: specs.length,
+            command: commandSummary,
+            error: message,
+            durationMs: finishedAt.getTime() - startedAt.getTime(),
+          },
+          "SSH 子命令执行异常，批量执行已停止",
+        )
         results.push({
           spec,
           result: {
@@ -107,13 +184,23 @@ export async function executeCommands(
           startedAt,
           finishedAt,
         })
-        // Stop on first failure
         break
       }
     }
   } finally {
     conn.end()
   }
+
+  logger.info(
+    {
+      host: credential.host,
+      completedCount: results.length,
+      totalCommands: specs.length,
+      failedCount: results.filter((step) => step.result.exitCode !== 0 || step.result.timedOut)
+        .length,
+    },
+    "SSH 批量命令执行结束",
+  )
 
   return results
 }
@@ -127,6 +214,7 @@ export async function testSshAuthentication(
   connectTimeoutMs: number,
 ): Promise<{ success: boolean; error?: string }> {
   if (credential.decryptedSecret === null) {
+    logger.warn({ host: credential.host }, "SSH 认证测试失败：节点未保存凭据")
     return { success: false, error: "No SSH credential stored." }
   }
 
@@ -134,9 +222,14 @@ export async function testSshAuthentication(
 
   try {
     await connectSsh(conn, credential, credential.decryptedSecret, connectTimeoutMs)
+    logger.info({ host: credential.host, username: credential.username }, "SSH 认证测试成功")
     return { success: true }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    logger.warn(
+      { host: credential.host, username: credential.username, error: message },
+      "SSH 认证测试失败",
+    )
     return { success: false, error: message }
   } finally {
     conn.end()
@@ -152,11 +245,16 @@ function connectSsh(
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       conn.end()
+      logger.warn({ host: credential.host, timeoutMs: connectTimeoutMs }, "SSH 连接超时")
       reject(new AppError("SSH_TIMEOUT", "SSH connection timed out.", 504))
     }, connectTimeoutMs)
 
     conn.once("ready", () => {
       clearTimeout(timer)
+      logger.info(
+        { host: credential.host, port: credential.port, username: credential.username },
+        "SSH 认证成功，连接就绪",
+      )
       resolve()
     })
 
@@ -169,8 +267,13 @@ function connectSsh(
         message.includes("permission denied") ||
         message.includes("all configured authentication methods failed")
       ) {
+        logger.warn(
+          { host: credential.host, username: credential.username, error: error.message },
+          "SSH 认证失败",
+        )
         reject(new AppError("SSH_AUTH_FAILED", error.message, 502))
       } else if (message.includes("timed out") || message.includes("timeout")) {
+        logger.warn({ host: credential.host, error: error.message }, "SSH 连接超时")
         reject(new AppError("SSH_TIMEOUT", error.message, 504))
       } else if (
         message.includes("connect") ||
@@ -179,8 +282,10 @@ function connectSsh(
         message.includes("econnrefused") ||
         message.includes("enotfound")
       ) {
+        logger.warn({ host: credential.host, error: error.message }, "SSH 连接失败")
         reject(new AppError("SSH_CONNECT_FAILED", error.message, 502))
       } else {
+        logger.error({ host: credential.host, error: error.message }, "SSH 连接发生未预期错误")
         reject(new AppError("SSH_ERROR", error.message, 502))
       }
     })
@@ -233,6 +338,10 @@ function runCommand(
         timedOut = true
         stream.close()
       }, timeoutMs)
+
+      if (spec.sudoPassword !== undefined) {
+        stream.write(`${spec.sudoPassword}\n`)
+      }
 
       stream.on("data", (data: Buffer) => stdoutChunks.push(data))
       stream.stderr.on("data", (data: Buffer) => stderrChunks.push(data))

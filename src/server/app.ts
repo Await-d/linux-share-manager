@@ -7,6 +7,7 @@ import type { AppDatabase } from "./db/client"
 import { createDatabase } from "./db/client"
 import { AppError } from "./errors"
 import { HealthService } from "./health/service"
+import { logger } from "./logger"
 import type { AppEnv } from "./middleware/auth"
 import { sameOriginGuard } from "./middleware/security"
 import { NodeRepository } from "./nodes/repository"
@@ -51,8 +52,15 @@ export function createApp(options: CreateAppOptions = {}): Hono<AppEnv> {
   )
   app.onError((error, context) => {
     const normalized = normalizeError(error)
-    if (normalized.status === 500 && !(error instanceof AppError)) {
-      console.error(error)
+    if (normalized.status === 500) {
+      if (error instanceof AppError) {
+        logger.error(
+          { code: normalized.code, message: normalized.message, path: context.req.path },
+          "app error (500)",
+        )
+      } else {
+        logger.error({ err: error, path: context.req.path }, "unhandled exception (500)")
+      }
     }
     return context.json(
       { error: { code: normalized.code, message: normalized.message } },

@@ -1,15 +1,18 @@
 import { desc, eq } from "drizzle-orm"
 import type { ShareResponse } from "../../shared/schemas/shares"
 import type { AppDatabase } from "../db/client"
-import { healthChecks, shares } from "../db/schema"
-import type { CommandSpec } from "../executor/command"
-import { executeCommands } from "../executor/ssh-executor"
+import { healthChecks } from "../db/schema"
+import { executeCommands, type SshExecutorOptions } from "../executor/ssh-executor"
+import { logger } from "../logger"
 import type { NodeCredential } from "../nodes/repository"
+import { buildReadHealthState } from "./read-state"
+import { buildSourceHealthState } from "./source-state"
+import { determineHealthStatus, type HealthStatus } from "./status"
 
 export type HealthCheckResult = {
   readonly id: string
   readonly shareId: string
-  readonly status: "healthy" | "degraded" | "unhealthy" | "unknown"
+  readonly status: HealthStatus
   readonly sourceOnline: boolean
   readonly targetOnline: boolean
   readonly nfsServiceOk: boolean | null
@@ -30,8 +33,8 @@ export class HealthService {
     share: ShareResponse,
     sourceCredential: NodeCredential,
     targetCredential: NodeCredential,
-    sourceHost: string,
-    options: { connectTimeoutMs: number; commandTimeoutMs: number; maxOutputBytes: number },
+    _sourceHost: string,
+    options: SshExecutorOptions,
   ): Promise<HealthCheckResult> {
     const now = new Date()
     let sourceOnline = false
@@ -43,6 +46,8 @@ export class HealthService {
     let latencyMs: number | null = null
     const errorCode: string | null = null
     let errorMessage: string | null = null
+
+    logger.info({ shareId: share.id, shareName: share.name }, "health check started")
 
     try {
       // Check source node
@@ -60,9 +65,14 @@ export class HealthService {
         ],
         options,
       )
-      sourceOnline = sourceResults.length > 0 && sourceResults[0].result.exitCode === 0
-      if (sourceOnline) {
-        nfsServiceOk = sourceResults[0].result.stdout.includes("active")
+      const sourceHealth = buildSourceHealthState(sourceResults)
+      sourceOnline = sourceHealth.sourceOnline
+      nfsServiceOk = sourceHealth.nfsServiceOk
+      if (!sourceOnline) {
+        logger.warn({ shareId: share.id }, "health check: source node offline or SSH failed")
+      }
+      if (nfsServiceOk === false) {
+        logger.warn({ shareId: share.id }, "health check: NFS service not active on source")
       }
       latencyMs = Date.now() - sourceStart
 
@@ -81,8 +91,16 @@ export class HealthService {
         options,
       )
       targetOnline = targetResults.length > 0
-      if (targetOnline && targetResults[0].result.exitCode === 0) {
-        mountpointOk = targetResults[0].result.stdout.trim().length > 0
+      if (targetOnline && (targetResults[0]?.result.exitCode ?? 1) === 0) {
+        mountpointOk = (targetResults[0]?.result.stdout ?? "").trim().length > 0
+      } else {
+        logger.warn({ shareId: share.id }, "health check: target node offline or SSH failed")
+      }
+      if (mountpointOk === false) {
+        logger.warn(
+          { shareId: share.id, targetPath: share.targetPath },
+          "health check: mountpoint not found",
+        )
       }
 
       // Read test
@@ -100,13 +118,28 @@ export class HealthService {
           ],
           options,
         )
-        readOk = readResults.length > 0 && readResults[0].result.exitCode === 0
+        const readHealth = buildReadHealthState(readResults)
+        readOk = readHealth.readOk
+        errorMessage = readHealth.errorMessage
+        if (readOk === false) {
+          logger.warn(
+            { shareId: share.id, targetPath: share.targetPath, error: errorMessage },
+            "health check: read test failed",
+          )
+        }
       }
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : String(err)
+      logger.error({ shareId: share.id, error: errorMessage }, "health check failed with exception")
     }
 
-    const status = determineStatus(sourceOnline, targetOnline, nfsServiceOk, mountpointOk, readOk)
+    const status = determineHealthStatus({
+      sourceOnline,
+      targetOnline,
+      nfsServiceOk,
+      mountpointOk,
+      readOk,
+    })
     const summary = buildSummary(
       share,
       status,
@@ -138,6 +171,11 @@ export class HealthService {
         createdAt: now,
       })
       .run()
+
+    logger.info(
+      { shareId: share.id, status, sourceOnline, targetOnline, nfsServiceOk, mountpointOk, readOk },
+      "health check completed",
+    )
 
     return {
       id,
@@ -202,20 +240,6 @@ function toHealthResult(row: HealthRow): HealthCheckResult {
     summary: row.summary ?? "",
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   }
-}
-
-function determineStatus(
-  sourceOnline: boolean,
-  targetOnline: boolean,
-  nfsServiceOk: boolean | null,
-  mountpointOk: boolean | null,
-  readOk: boolean | null,
-): HealthCheckResult["status"] {
-  if (!sourceOnline || !targetOnline) return "unhealthy"
-  if (nfsServiceOk === false || mountpointOk === false) return "degraded"
-  if (readOk === false) return "degraded"
-  if (nfsServiceOk === true && mountpointOk === true && readOk === true) return "healthy"
-  return "unknown"
 }
 
 function buildSummary(

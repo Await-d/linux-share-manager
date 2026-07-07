@@ -1,6 +1,7 @@
 import { desc } from "drizzle-orm"
 import type { AppDatabase } from "../db/client"
 import { auditLogs } from "../db/schema"
+import { logger } from "../logger"
 
 export type AuditAction =
   | "node.created"
@@ -49,21 +50,28 @@ export class AuditService {
     readonly ipAddress?: string
   }): void {
     const now = new Date()
-    this.database.db
-      .insert(auditLogs)
-      .values({
-        id: crypto.randomUUID(),
-        actor: params.actor,
-        action: params.action,
-        targetType: params.targetType ?? null,
-        targetId: params.targetId ?? null,
-        status: params.status ?? "ok",
-        summary: params.summary ?? null,
-        metadataJson: params.metadata ? JSON.stringify(params.metadata) : null,
-        ipAddress: params.ipAddress ?? null,
-        createdAt: now,
-      })
-      .run()
+    try {
+      this.database.db
+        .insert(auditLogs)
+        .values({
+          id: crypto.randomUUID(),
+          actor: params.actor,
+          action: params.action,
+          targetType: params.targetType ?? null,
+          targetId: params.targetId ?? null,
+          status: params.status ?? "ok",
+          summary: params.summary ?? null,
+          metadataJson: params.metadata ? JSON.stringify(params.metadata) : null,
+          ipAddress: params.ipAddress ?? null,
+          createdAt: now,
+        })
+        .run()
+    } catch (err) {
+      logger.error(
+        { actor: params.actor, action: params.action, error: String(err) },
+        "audit log write failed",
+      )
+    }
   }
 
   list(limit: number = 50, offset: number = 0): readonly AuditRecord[] {

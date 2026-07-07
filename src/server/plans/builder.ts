@@ -3,9 +3,9 @@
  * checks path conflicts, and produces a frozen plan for confirmation.
  */
 
-import type { NodeResponse } from "../../shared/schemas/nodes"
 import type { ShareResponse } from "../../shared/schemas/shares"
-import type { CommandSpec } from "../executor/command"
+import { type CommandSpec, shellEscape } from "../executor/command"
+import { logger } from "../logger"
 
 // --- Types ---
 
@@ -45,6 +45,8 @@ export type PlanNodeInfo = {
   readonly sudoOk: boolean
   readonly nfsServerInstalled: boolean
   readonly nfsClientInstalled: boolean
+  /** SSH password for sudo -S when NOPASSWD is unavailable (null for key-based auth). */
+  readonly sudoPassword: string | null
 }
 
 export type PlanConfig = {
@@ -52,8 +54,19 @@ export type PlanConfig = {
   readonly targetPath: string
   readonly accessMode: "read_only" | "read_write"
   readonly nfsVersion: string
+  readonly requestedNfsVersion: string
   readonly autoMount: boolean
   readonly clientAllowRule: string
+  /** Optional NFS server port override (when not using default 2049). */
+  readonly nfsPort?: number | undefined
+}
+
+export type SupportedNfsVersion = "3" | "4" | "4.1" | "4.2"
+
+export type SharePlanOptions = {
+  readonly version?: number
+  readonly nfsPort?: number | undefined
+  readonly supportedNfsVersions?: readonly SupportedNfsVersion[]
 }
 
 export type PlanValidationError = {
@@ -82,6 +95,8 @@ const FORBIDDEN_PATHS = [
   "/var/lib/redis",
   "/var/lib/docker",
 ]
+
+const NFS_VERSION_PREFERENCE: readonly SupportedNfsVersion[] = ["4.2", "4.1", "4", "3"]
 
 // --- Path validation ---
 
@@ -137,16 +152,46 @@ export function validatePaths(
   return errors
 }
 
+export function resolveNfsVersion(
+  requestedVersion: string,
+  supportedVersions: readonly SupportedNfsVersion[] | undefined,
+): SupportedNfsVersion {
+  if (requestedVersion !== "auto") {
+    return isSupportedNfsVersion(requestedVersion) ? requestedVersion : "4.2"
+  }
+
+  if (supportedVersions === undefined || supportedVersions.length === 0) {
+    return "4.2"
+  }
+
+  return NFS_VERSION_PREFERENCE.find((version) => supportedVersions.includes(version)) ?? "4.2"
+}
+
+function isSupportedNfsVersion(version: string): version is SupportedNfsVersion {
+  switch (version) {
+    case "3":
+    case "4":
+    case "4.1":
+    case "4.2":
+      return true
+    default:
+      return false
+  }
+}
+
 // --- Plan generation ---
 
 export function generateSharePlan(
   share: ShareResponse,
   sourceNode: PlanNodeInfo,
   targetNode: PlanNodeInfo,
-  version: number = 1,
+  options: SharePlanOptions = {},
 ): SharePlan {
+  const version = options.version ?? 1
+  const nfsPort = options.nfsPort
   const warnings: string[] = []
   let riskLevel: PlanRiskLevel = "low"
+  const effectiveNfsVersion = resolveNfsVersion(share.nfsVersion, options.supportedNfsVersions)
 
   if (!sourceNode.sudoOk) {
     warnings.push("源节点 sudo 不可用 — 可能无法安装或配置 NFS 服务。")
@@ -168,12 +213,44 @@ export function generateSharePlan(
     warnings.push("源节点未检测到 IP 地址 — 目标节点可能无法访问 NFS 服务。")
     riskLevel = "high"
   }
+  if (nfsPort !== undefined && nfsPort !== 2049) {
+    warnings.push(`源节点 NFS 服务使用非默认端口 ${nfsPort} — 挂载配置将使用该端口。`)
+    riskLevel = riskLevel === "low" ? "medium" : riskLevel
+  }
+  if (share.nfsVersion === "auto") {
+    warnings.push(`NFS 版本已自动选择为 ${effectiveNfsVersion}。`)
+  }
 
-  const steps = buildPlanSteps(
-    share,
-    sourceNode,
-    targetNode,
-    sourceNode.sudoOk && targetNode.sudoOk,
+  const steps = buildPlanSteps(share, sourceNode, targetNode, effectiveNfsVersion, nfsPort)
+
+  // Strip sudoPassword from steps before returning — passwords are injected at execution time
+  const safeSteps = steps.map((step) => ({
+    ...step,
+    commands: step.commands.map((cmd) => {
+      const { sudoPassword: _pw, ...rest } = cmd
+      return rest
+    }),
+    rollbackCommands: step.rollbackCommands.map((cmd) => {
+      const { sudoPassword: _pw, ...rest } = cmd
+      return rest
+    }),
+  }))
+
+  // Strip sudoPassword from node info
+  const safeSourceNode = { ...sourceNode, sudoPassword: null }
+  const safeTargetNode = { ...targetNode, sudoPassword: null }
+
+  logger.info(
+    {
+      shareId: share.id,
+      shareName: share.name,
+      version,
+      riskLevel,
+      stepCount: steps.length,
+      warningCount: warnings.length,
+      nfsPort: nfsPort ?? 2049,
+    },
+    "share plan generated",
   )
 
   return {
@@ -182,17 +259,19 @@ export function generateSharePlan(
     version,
     riskLevel,
     warnings,
-    sourceNode,
-    targetNode,
+    sourceNode: safeSourceNode,
+    targetNode: safeTargetNode,
     config: {
       sourcePath: share.sourcePath,
       targetPath: share.targetPath,
       accessMode: share.accessMode,
-      nfsVersion: share.nfsVersion,
+      nfsVersion: effectiveNfsVersion,
+      requestedNfsVersion: share.nfsVersion,
       autoMount: share.autoMount,
       clientAllowRule: targetNode.primaryIp ?? targetNode.host,
+      nfsPort,
     },
-    steps,
+    steps: safeSteps,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -201,22 +280,78 @@ function buildPlanSteps(
   share: ShareResponse,
   sourceNode: PlanNodeInfo,
   targetNode: PlanNodeInfo,
-  sudoAvailable: boolean,
+  nfsVersion: SupportedNfsVersion,
+  nfsPort?: number | undefined,
 ): readonly PlanStep[] {
   const steps: PlanStep[] = []
   const accessOpts = share.accessMode === "read_only" ? "ro" : "rw"
   const exportOptions = `${accessOpts},sync,no_subtree_check,root_squash`
-  const mountOptions = `vers=${share.nfsVersion},_netdev,nofail,hard,timeo=50,retrans=2`
+  const portOption = nfsPort !== undefined && nfsPort !== 2049 ? `,port=${nfsPort}` : ""
+  const nfsVersionOptions =
+    nfsVersion === "3" ? "vers=3,proto=tcp,mountproto=tcp" : `vers=${nfsVersion}`
+  const mountOptions = `${nfsVersionOptions},_netdev,nofail,hard,timeo=50,retrans=2${portOption}`
+
+  // Determine sudo strategy for each node:
+  // - sudoOk=true → use sudo -n (NOPASSWD)
+  // - sudoOk=false but password available → use sudo -S (password via stdin)
+  // - sudoOk=false and no password → no sudo
+  const sourceSudo = sourceNode.sudoOk || sourceNode.sudoPassword !== null
+  const sourceSudoPassword = sourceNode.sudoOk ? undefined : (sourceNode.sudoPassword ?? undefined)
+  const targetSudo = targetNode.sudoOk || targetNode.sudoPassword !== null
+  const targetSudoPassword = targetNode.sudoOk ? undefined : (targetNode.sudoPassword ?? undefined)
+
+  // Helper: create a sudo-aware command spec for the source node
+  const srcCmd = (
+    exec: string,
+    args: readonly string[],
+    timeoutMs: number,
+    preview: string,
+    sensitive = false,
+  ): CommandSpec =>
+    sourceSudoPassword !== undefined
+      ? {
+          executable: exec,
+          args,
+          sudo: sourceSudo,
+          sudoPassword: sourceSudoPassword,
+          timeoutMs,
+          preview,
+          sensitive,
+        }
+      : { executable: exec, args, sudo: sourceSudo, timeoutMs, preview, sensitive }
+
+  // Helper: create a sudo-aware command spec for the target node
+  const tgtCmd = (
+    exec: string,
+    args: readonly string[],
+    timeoutMs: number,
+    preview: string,
+    sensitive = false,
+  ): CommandSpec =>
+    targetSudoPassword !== undefined
+      ? {
+          executable: exec,
+          args,
+          sudo: targetSudo,
+          sudoPassword: targetSudoPassword,
+          timeoutMs,
+          preview,
+          sensitive,
+        }
+      : { executable: exec, args, sudo: targetSudo, timeoutMs, preview, sensitive }
 
   // Step 1: Install NFS server on source
   if (!sourceNode.nfsServerInstalled) {
+    const installCmds = nfsServerInstallCommands(sourceNode.osFamily, sourceSudo)
     steps.push({
       key: "install-nfs-server",
       name: "安装 NFS Server",
       description: `在源节点 ${sourceNode.name} 上安装 NFS 服务端软件包`,
       nodeId: sourceNode.id,
       nodeName: sourceNode.name,
-      commands: nfsServerInstallCommands(sourceNode.osFamily, sudoAvailable),
+      commands: installCmds.map((c) =>
+        sourceSudoPassword !== undefined ? { ...c, sudoPassword: sourceSudoPassword } : c,
+      ),
       rollbackCommands: [],
       sensitive: false,
       reversible: false,
@@ -230,15 +365,7 @@ function buildPlanSteps(
     description: `在源节点 ${sourceNode.name} 上创建共享目录 ${share.sourcePath}`,
     nodeId: sourceNode.id,
     nodeName: sourceNode.name,
-    commands: [
-      {
-        executable: "mkdir",
-        args: ["-p", share.sourcePath],
-        sudo: sudoAvailable,
-        timeoutMs: 5_000,
-        preview: `mkdir -p ${share.sourcePath}`,
-      },
-    ],
+    commands: [srcCmd("mkdir", ["-p", share.sourcePath], 5_000, `mkdir -p ${share.sourcePath}`)],
     rollbackCommands: [],
     sensitive: false,
     reversible: false,
@@ -252,20 +379,49 @@ function buildPlanSteps(
     nodeId: sourceNode.id,
     nodeName: sourceNode.name,
     commands: [
-      {
-        executable: "cp",
-        args: ["/etc/exports", `/etc/exports.lsm-backup-${share.id}`],
-        sudo: sudoAvailable,
-        timeoutMs: 5_000,
-        preview: `cp /etc/exports /etc/exports.lsm-backup-${share.id}`,
-      },
+      srcCmd(
+        "cp",
+        ["/etc/exports", `/etc/exports.lsm-backup-${share.id}`],
+        5_000,
+        `cp /etc/exports /etc/exports.lsm-backup-${share.id}`,
+      ),
     ],
     rollbackCommands: [],
     sensitive: false,
     reversible: true,
   })
 
+  // Step 3.5: Remove old managed block (avoid duplicate exports on re-execution)
+  const cleanOldExportsScript = [
+    "share_id=$1",
+    "tmp=$(mktemp /tmp/.lsm_exports.XXXXXX)",
+    'awk -v share_id="$share_id" \'$0 == "# BEGIN LINUX_SHARE_MANAGER share_id=" share_id { skip = 1; next } $0 == "# END LINUX_SHARE_MANAGER share_id=" share_id { skip = 0; next } skip != 1 { print }\' /etc/exports > "$tmp" && cp "$tmp" /etc/exports',
+    "status=$?",
+    'rm -f "$tmp"',
+    'exit "$status"',
+  ].join("; ")
+  steps.push({
+    key: "clean-old-exports",
+    name: "清理旧导出配置",
+    description: `移除源节点 ${sourceNode.name} 上该路径的旧导出条目`,
+    nodeId: sourceNode.id,
+    nodeName: sourceNode.name,
+    commands: [
+      sudoShellCmd(
+        ["-c", cleanOldExportsScript, "sh", share.id],
+        5_000,
+        `clean old exports for ${share.sourcePath}`,
+        sourceSudo,
+        sourceSudoPassword,
+      ),
+    ],
+    rollbackCommands: [],
+    sensitive: false,
+    reversible: false,
+  })
+
   // Step 4: Write exports managed block
+  const exportsContent = buildExportsContent(share, targetNode, exportOptions)
   steps.push({
     key: "write-exports",
     name: "配置 NFS exports",
@@ -273,36 +429,40 @@ function buildPlanSteps(
     nodeId: sourceNode.id,
     nodeName: sourceNode.name,
     commands: [
-      {
-        executable: "tee",
-        args: ["-a", "/etc/exports"],
-        sudo: sudoAvailable,
-        timeoutMs: 5_000,
-        preview: buildExportsBlock(share, sourceNode, exportOptions),
-        sensitive: false,
-      },
+      sudoShellCmd(
+        [
+          "-c",
+          `printf '%s\\n' ${shellQuoteLines(exportsContent)} | tee -a /etc/exports > /dev/null`,
+        ],
+        5_000,
+        `append exports config to /etc/exports`,
+        sourceSudo,
+        sourceSudoPassword,
+      ),
     ],
     rollbackCommands: [
-      {
-        executable: "cp",
-        args: [`/etc/exports.lsm-backup-${share.id}`, "/etc/exports"],
-        sudo: sudoAvailable,
-        timeoutMs: 5_000,
-        preview: "Restore /etc/exports from backup",
-      },
+      srcCmd(
+        "cp",
+        [`/etc/exports.lsm-backup-${share.id}`, "/etc/exports"],
+        5_000,
+        "Restore /etc/exports from backup",
+      ),
     ],
     sensitive: false,
     reversible: true,
   })
 
   // Step 5: Enable and start NFS server
+  const enableCmds = nfsServerEnableCommands(sourceNode.osFamily, sourceSudo)
   steps.push({
     key: "enable-nfs-server",
     name: "启用 NFS 服务",
     description: `在源节点 ${sourceNode.name} 上启用并启动 NFS 服务`,
     nodeId: sourceNode.id,
     nodeName: sourceNode.name,
-    commands: nfsServerEnableCommands(sourceNode.osFamily, sudoAvailable),
+    commands: enableCmds.map((c) =>
+      sourceSudoPassword !== undefined ? { ...c, sudoPassword: sourceSudoPassword } : c,
+    ),
     rollbackCommands: [],
     sensitive: false,
     reversible: true,
@@ -315,15 +475,7 @@ function buildPlanSteps(
     description: `在源节点 ${sourceNode.name} 上执行 exportfs -ra`,
     nodeId: sourceNode.id,
     nodeName: sourceNode.name,
-    commands: [
-      {
-        executable: "exportfs",
-        args: ["-ra"],
-        sudo: sudoAvailable,
-        timeoutMs: 10_000,
-        preview: "exportfs -ra",
-      },
-    ],
+    commands: [srcCmd("exportfs", ["-ra"], 10_000, "exportfs -ra")],
     rollbackCommands: [],
     sensitive: false,
     reversible: true,
@@ -331,13 +483,16 @@ function buildPlanSteps(
 
   // Step 7: Install NFS client on target
   if (!targetNode.nfsClientInstalled) {
+    const installCmds = nfsClientInstallCommands(targetNode.osFamily, targetSudo)
     steps.push({
       key: "install-nfs-client",
       name: "安装 NFS Client",
       description: `在目标节点 ${targetNode.name} 上安装 NFS 客户端软件包`,
       nodeId: targetNode.id,
       nodeName: targetNode.name,
-      commands: nfsClientInstallCommands(targetNode.osFamily, sudoAvailable),
+      commands: installCmds.map((c) =>
+        targetSudoPassword !== undefined ? { ...c, sudoPassword: targetSudoPassword } : c,
+      ),
       rollbackCommands: [],
       sensitive: false,
       reversible: false,
@@ -351,15 +506,7 @@ function buildPlanSteps(
     description: `在目标节点 ${targetNode.name} 上创建挂载点 ${share.targetPath}`,
     nodeId: targetNode.id,
     nodeName: targetNode.name,
-    commands: [
-      {
-        executable: "mkdir",
-        args: ["-p", share.targetPath],
-        sudo: sudoAvailable,
-        timeoutMs: 5_000,
-        preview: `mkdir -p ${share.targetPath}`,
-      },
-    ],
+    commands: [tgtCmd("mkdir", ["-p", share.targetPath], 5_000, `mkdir -p ${share.targetPath}`)],
     rollbackCommands: [],
     sensitive: false,
     reversible: false,
@@ -368,95 +515,112 @@ function buildPlanSteps(
   // Step 9: Write systemd mount unit
   const mountUnitName = systemdEscapePath(`${share.targetPath}.mount`)
   const automountUnitName = systemdEscapePath(`${share.targetPath}.automount`)
+  const mountUnitPath = shellEscape(`/etc/systemd/system/${mountUnitName}`)
+  const automountUnitPath = shellEscape(`/etc/systemd/system/${automountUnitName}`)
   const nfsSource = `${sourceNode.primaryIp ?? sourceNode.host}:${share.sourcePath}`
+  const mountUnitContent = buildMountUnitContent(share, nfsSource, mountOptions)
+  const automountUnitContent = buildAutomountUnitContent(share)
+  const disableAutomountScript = [
+    "automount_unit=$1",
+    "automount_path=$2",
+    'systemctl stop "$automount_unit" >/dev/null 2>&1 || true',
+    'systemctl disable "$automount_unit" >/dev/null 2>&1 || true',
+    'rm -f "$automount_path"',
+  ].join("; ")
+  const systemdUnitCommands = [
+    sudoShellCmd(
+      [
+        "-c",
+        `printf '%s\\n' ${shellQuoteLines(mountUnitContent)} | tee ${mountUnitPath} > /dev/null`,
+      ],
+      5_000,
+      `write ${mountUnitName}`,
+      targetSudo,
+      targetSudoPassword,
+    ),
+    ...(share.autoMount
+      ? [
+          sudoShellCmd(
+            [
+              "-c",
+              `printf '%s\\n' ${shellQuoteLines(automountUnitContent)} | tee ${automountUnitPath} > /dev/null`,
+            ],
+            5_000,
+            `write ${automountUnitName}`,
+            targetSudo,
+            targetSudoPassword,
+          ),
+        ]
+      : []),
+    tgtCmd("systemctl", ["daemon-reload"], 5_000, "systemctl daemon-reload"),
+    ...(share.autoMount
+      ? [
+          tgtCmd(
+            "systemctl",
+            ["enable", automountUnitName],
+            10_000,
+            `systemctl enable ${automountUnitName}`,
+          ),
+          tgtCmd(
+            "systemctl",
+            ["start", automountUnitName],
+            15_000,
+            `systemctl start ${automountUnitName}`,
+          ),
+        ]
+      : [
+          sudoShellCmd(
+            [
+              "-c",
+              disableAutomountScript,
+              "sh",
+              automountUnitName,
+              `/etc/systemd/system/${automountUnitName}`,
+            ],
+            10_000,
+            `disable stale ${automountUnitName}`,
+            targetSudo,
+            targetSudoPassword,
+          ),
+          tgtCmd("systemctl", ["daemon-reload"], 5_000, "systemctl daemon-reload"),
+          tgtCmd("systemctl", ["start", mountUnitName], 15_000, `systemctl start ${mountUnitName}`),
+        ]),
+  ] satisfies readonly CommandSpec[]
+  const rollbackUnitCommands = [
+    ...(share.autoMount
+      ? [
+          tgtCmd(
+            "systemctl",
+            ["stop", automountUnitName],
+            10_000,
+            `systemctl stop ${automountUnitName}`,
+          ),
+          tgtCmd(
+            "systemctl",
+            ["disable", automountUnitName],
+            5_000,
+            `systemctl disable ${automountUnitName}`,
+          ),
+        ]
+      : [tgtCmd("systemctl", ["stop", mountUnitName], 10_000, `systemctl stop ${mountUnitName}`)]),
+    tgtCmd(
+      "rm",
+      ["-f", `/etc/systemd/system/${mountUnitName}`, `/etc/systemd/system/${automountUnitName}`],
+      3_000,
+      "Remove systemd units",
+    ),
+  ] satisfies readonly CommandSpec[]
 
   steps.push({
     key: "write-systemd-units",
     name: "写入 systemd 单元",
-    description: `在目标节点 ${targetNode.name} 上创建 .mount 和 .automount 单元`,
+    description: share.autoMount
+      ? `在目标节点 ${targetNode.name} 上创建 .mount 和 .automount 单元`
+      : `在目标节点 ${targetNode.name} 上创建 .mount 单元并立即挂载`,
     nodeId: targetNode.id,
     nodeName: targetNode.name,
-    commands: [
-      {
-        executable: "tee",
-        args: [`/etc/systemd/system/${mountUnitName}`],
-        sudo: sudoAvailable,
-        timeoutMs: 5_000,
-        preview: buildMountUnit(mountUnitName, share, nfsSource, mountOptions),
-        sensitive: false,
-      },
-      {
-        executable: "tee",
-        args: [`/etc/systemd/system/${automountUnitName}`],
-        sudo: sudoAvailable,
-        timeoutMs: 5_000,
-        preview: buildAutomountUnit(automountUnitName, share),
-        sensitive: false,
-      },
-    ],
-    rollbackCommands: [
-      {
-        executable: "rm",
-        args: [
-          "-f",
-          `/etc/systemd/system/${mountUnitName}`,
-          `/etc/systemd/system/${automountUnitName}`,
-        ],
-        sudo: sudoAvailable,
-        timeoutMs: 3_000,
-        preview: "Remove systemd units",
-      },
-    ],
-    sensitive: false,
-    reversible: true,
-  })
-
-  // Step 10: Enable and start automount
-  steps.push({
-    key: "enable-automount",
-    name: "启用自动挂载",
-    description: `在目标节点 ${targetNode.name} 上启用并启动 automount`,
-    nodeId: targetNode.id,
-    nodeName: targetNode.name,
-    commands: [
-      {
-        executable: "systemctl",
-        args: ["daemon-reload"],
-        sudo: sudoAvailable,
-        timeoutMs: 5_000,
-        preview: "systemctl daemon-reload",
-      },
-      {
-        executable: "systemctl",
-        args: ["enable", automountUnitName],
-        sudo: sudoAvailable,
-        timeoutMs: 10_000,
-        preview: `systemctl enable ${automountUnitName}`,
-      },
-      {
-        executable: "systemctl",
-        args: ["start", automountUnitName],
-        sudo: sudoAvailable,
-        timeoutMs: 15_000,
-        preview: `systemctl start ${automountUnitName}`,
-      },
-    ],
-    rollbackCommands: [
-      {
-        executable: "systemctl",
-        args: ["stop", automountUnitName],
-        sudo: sudoAvailable,
-        timeoutMs: 10_000,
-        preview: `systemctl stop ${automountUnitName}`,
-      },
-      {
-        executable: "systemctl",
-        args: ["disable", automountUnitName],
-        sudo: sudoAvailable,
-        timeoutMs: 5_000,
-        preview: `systemctl disable ${automountUnitName}`,
-      },
-    ],
+    commands: systemdUnitCommands,
+    rollbackCommands: rollbackUnitCommands,
     sensitive: false,
     reversible: true,
   })
@@ -576,26 +740,24 @@ function nfsClientInstallCommands(osFamily: string | null, sudo: boolean): reado
 
 // --- Unit file builders ---
 
-function buildExportsBlock(
+function buildExportsContent(
   share: ShareResponse,
-  sourceNode: PlanNodeInfo,
+  targetNode: PlanNodeInfo,
   exportOptions: string,
 ): string {
-  const block = [
+  return [
     `# BEGIN LINUX_SHARE_MANAGER share_id=${share.id}`,
-    `${share.sourcePath} ${sourceNode.primaryIp ?? sourceNode.host}(${exportOptions})`,
+    `${share.sourcePath} ${targetNode.primaryIp ?? targetNode.host}(${exportOptions})`,
     `# END LINUX_SHARE_MANAGER share_id=${share.id}`,
-  ].join("\\n")
-  return `echo -e "${block}" | tee -a /etc/exports`
+  ].join("\n")
 }
 
-function buildMountUnit(
-  unitName: string,
+function buildMountUnitContent(
   share: ShareResponse,
   nfsSource: string,
   mountOptions: string,
 ): string {
-  const content = [
+  return [
     "[Unit]",
     `Description=Linux Share Manager mount for ${share.targetPath}`,
     `Documentation=Linux Share Manager share_id=${share.id}`,
@@ -611,12 +773,11 @@ function buildMountUnit(
     "",
     "[Install]",
     "WantedBy=multi-user.target",
-  ].join("\\n")
-  return `echo -e "${content}" | tee /etc/systemd/system/${unitName}`
+  ].join("\n")
 }
 
-function buildAutomountUnit(unitName: string, share: ShareResponse): string {
-  const content = [
+function buildAutomountUnitContent(share: ShareResponse): string {
+  return [
     "[Unit]",
     `Description=Linux Share Manager automount for ${share.targetPath}`,
     `Documentation=Linux Share Manager share_id=${share.id}`,
@@ -627,27 +788,41 @@ function buildAutomountUnit(unitName: string, share: ShareResponse): string {
     "",
     "[Install]",
     "WantedBy=multi-user.target",
-  ].join("\\n")
-  return `echo -e "${content}" | tee /etc/systemd/system/${unitName}`
+  ].join("\n")
 }
 
 // --- systemd path escaping ---
 
-function systemdEscapePath(suffix: string): string {
+/** Quote each line of a multi-line string as a separate shell argument for printf '%s\n'.
+ *  Each line is single-quote-escaped, then joined with spaces. */
+function shellQuoteLines(content: string): string {
+  return content
+    .split("\n")
+    .map((line) => `'${line.replace(/'/g, "'\\''")}'`)
+    .join(" ")
+}
+
+function sudoShellCmd(
+  args: readonly string[],
+  timeoutMs: number,
+  preview: string,
+  sudo: boolean,
+  sudoPassword: string | undefined,
+): CommandSpec {
+  return sudo && sudoPassword !== undefined
+    ? { executable: "sh", args, sudo, sudoPassword, timeoutMs, preview }
+    : { executable: "sh", args, sudo, timeoutMs, preview }
+}
+
+/** Escape a filesystem path into a systemd unit name suffix.
+ *  Rules: '/' → '-', leading '-' trimmed, '-' → '\\x2d', other special chars → '\\xHH'. */
+function systemdEscapePath(path: string): string {
   let result = ""
-  let skip = false
-  for (const ch of suffix) {
-    if (skip) {
-      skip = false
-      continue
-    }
-    if (ch === "-") {
-      result += "\\x2d"
-    } else if (ch === "/") {
+  for (const ch of path) {
+    if (ch === "/") {
       result += "-"
-      if (suffix.indexOf("/", suffix.indexOf(ch) + 1) === suffix.indexOf(ch) + 1) {
-        skip = true
-      }
+    } else if (ch === "-") {
+      result += "\\x2d"
     } else if (
       (ch >= "a" && ch <= "z") ||
       (ch >= "A" && ch <= "Z") ||
@@ -657,9 +832,9 @@ function systemdEscapePath(suffix: string): string {
     ) {
       result += ch
     } else {
-      result += `\\x${ch.charCodeAt(0).toString(16)}`
+      result += `\\x${ch.charCodeAt(0).toString(16).padStart(2, "0")}`
     }
   }
-  // Trim leading dashes
+  // Trim leading dashes (from leading slashes)
   return result.replace(/^-+/, "")
 }

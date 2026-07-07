@@ -6,6 +6,7 @@ import type { AuthService } from "../auth/service"
 import type { AppConfig } from "../config"
 import { AppError } from "../errors"
 import { testSshAuthentication } from "../executor/ssh-executor"
+import { logger } from "../logger"
 import type { AppEnv } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
 import { testTcpConnection } from "../nodes/connectivity"
@@ -30,6 +31,7 @@ export function registerNodeRoutes(options: NodeRouteOptions): void {
     const { id } = context.req.valid("param")
     const node = options.nodes.find(id)
     if (node === null) {
+      logger.warn({ nodeId: id }, "node not found (get by id)")
       throw new AppError("NODE_NOT_FOUND", "The requested node does not exist.", 404)
     }
 
@@ -38,6 +40,7 @@ export function registerNodeRoutes(options: NodeRouteOptions): void {
 
   options.app.post("/api/nodes", auth, zValidator("json", CreateNodeRequestSchema), (context) => {
     const node = options.nodes.create(context.req.valid("json"))
+    logger.info({ nodeId: node.id, nodeName: node.name, host: node.host }, "node created")
     return context.json(node, 201)
   })
 
@@ -50,14 +53,23 @@ export function registerNodeRoutes(options: NodeRouteOptions): void {
       const { id } = context.req.valid("param")
       const node = options.nodes.find(id)
       if (node === null) {
+        logger.warn({ nodeId: id }, "node not found (test-connection)")
         throw new AppError("NODE_NOT_FOUND", "The requested node does not exist.", 404)
       }
 
+      logger.info({ nodeId: id, host: node.host, port: node.port }, "testing node TCP connection")
       const reachable = await testTcpConnection({
         host: node.host,
         port: node.port,
         timeoutMs: options.config.sshConnectTimeoutMs,
       })
+      logger.info({ nodeId: id, reachable }, "node TCP connection test result")
+      if (!reachable) {
+        logger.warn(
+          { nodeId: id, host: node.host, port: node.port },
+          "node TCP connection test: unreachable",
+        )
+      }
       const tested = options.nodes.updateProbeStatus(id, reachable ? "ok" : "failed")
       if (tested === null) {
         throw new AppError("NODE_NOT_FOUND", "The requested node does not exist.", 404)
@@ -76,15 +88,25 @@ export function registerNodeRoutes(options: NodeRouteOptions): void {
       const { id } = context.req.valid("param")
       const node = options.nodes.find(id)
       if (node === null) {
+        logger.warn({ nodeId: id }, "node not found (test-auth)")
         throw new AppError("NODE_NOT_FOUND", "The requested node does not exist.", 404)
       }
 
       const credential = options.nodes.findCredential(id)
       if (credential === null) {
+        logger.warn({ nodeId: id }, "node credential not found (test-auth)")
         throw new AppError("NODE_NOT_FOUND", "The requested node does not exist.", 404)
       }
 
+      logger.info({ nodeId: id, host: node.host }, "testing node SSH auth")
       const result = await testSshAuthentication(credential, options.config.sshConnectTimeoutMs)
+      logger.info({ nodeId: id, authenticated: result.success }, "node SSH auth test result")
+      if (!result.success) {
+        logger.warn(
+          { nodeId: id, host: node.host, error: result.error },
+          "node SSH auth test failed",
+        )
+      }
 
       options.nodes.updateProbeStatus(id, result.success ? "ok" : "failed")
 
@@ -105,19 +127,31 @@ export function registerNodeRoutes(options: NodeRouteOptions): void {
       const { id } = context.req.valid("param")
       const node = options.nodes.find(id)
       if (node === null) {
+        logger.warn({ nodeId: id }, "node not found (probe)")
         throw new AppError("NODE_NOT_FOUND", "The requested node does not exist.", 404)
       }
 
       const credential = options.nodes.findCredential(id)
       if (credential === null) {
+        logger.warn({ nodeId: id }, "node credential not found (probe)")
         throw new AppError("NODE_NOT_FOUND", "The requested node does not exist.", 404)
       }
 
+      logger.info({ nodeId: id, host: node.host }, "node probe started")
       const probeResult = await probeNode(credential, {
         connectTimeoutMs: options.config.sshConnectTimeoutMs,
         commandTimeoutMs: 30_000,
         maxOutputBytes: 16_384,
       })
+      logger.info(
+        {
+          nodeId: id,
+          osFamily: probeResult.osFamily,
+          sshOk: probeResult.sshOk,
+          sudoOk: probeResult.sudoOk,
+        },
+        "node probe completed",
+      )
 
       // Save probe results to node
       const updated = options.nodes.saveProbeResult(id, probeResult)
@@ -156,6 +190,7 @@ export function registerNodeRoutes(options: NodeRouteOptions): void {
         throw new AppError("NODE_NOT_FOUND", "The requested node does not exist.", 404)
       }
 
+      logger.info({ nodeId: id, nodeName: node.name }, "node updated")
       return context.json(node)
     },
   )

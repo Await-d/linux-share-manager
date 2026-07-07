@@ -4,6 +4,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 import { InitAdminRequestSchema, LoginRequestSchema } from "../../shared/schemas/auth"
 import type { AuthService } from "../auth/service"
 import type { AppConfig } from "../config"
+import { logger } from "../logger"
 import type { AppEnv } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
 import { errorPayload } from "./http"
@@ -24,6 +25,7 @@ export function registerAuthRoutes(options: AuthRouteOptions): void {
     zValidator("json", InitAdminRequestSchema),
     async (context) => {
       const body = context.req.valid("json")
+      logger.info({ username: body.username }, "auth init request")
       const session = await options.auth.initializeAdmin(body.username, body.password)
       setSessionCookie({
         config: options.config,
@@ -38,6 +40,7 @@ export function registerAuthRoutes(options: AuthRouteOptions): void {
 
   options.app.post("/api/auth/login", zValidator("json", LoginRequestSchema), async (context) => {
     const body = context.req.valid("json")
+    logger.info({ username: body.username }, "login request")
     const session = await options.auth.login(body.username, body.password)
     setSessionCookie({
       config: options.config,
@@ -52,6 +55,7 @@ export function registerAuthRoutes(options: AuthRouteOptions): void {
   options.app.post("/api/auth/logout", requireAuth(options), (context) => {
     const sessionId = getCookie(context, options.config.sessionCookieName)
     if (sessionId !== undefined) {
+      logger.info({ sessionId: sessionId.slice(0, 8) }, "logout request")
       options.auth.logout(sessionId)
     }
     deleteCookie(context, options.config.sessionCookieName, { path: "/" })

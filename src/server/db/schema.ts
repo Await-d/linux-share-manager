@@ -106,6 +106,7 @@ export const sharePlans = sqliteTable("share_plans", {
   }).notNull(),
   riskLevel: text("risk_level", { enum: ["low", "medium", "high"] }).notNull(),
   planJson: text("plan_json").notNull(),
+  resultsJson: text("results_json"),
   createdBy: text("created_by"),
   confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),

@@ -1,5 +1,6 @@
-import type { CommandSpec } from "../executor/command"
+import type { CommandSpec, ExecutedStep } from "../executor/command"
 import { executeCommands } from "../executor/ssh-executor"
+import { logger } from "../logger"
 import type { NodeCredential } from "./repository"
 
 export type ProbeOptions = {
@@ -37,6 +38,12 @@ export type DiskInfo = {
   readonly used: string
   readonly available: string
   readonly usePercent: string
+}
+
+export type NodeProbeResultInput = {
+  readonly credential: NodeCredential
+  readonly results: readonly ExecutedStep[]
+  readonly probedAt: string
 }
 
 function buildProbeCommands(): readonly CommandSpec[] {
@@ -121,6 +128,7 @@ export async function probeNode(
   credential: NodeCredential,
   options: ProbeOptions,
 ): Promise<NodeProbeResult> {
+  logger.info({ host: credential.host }, "probeNode: starting probe commands")
   const specs = buildProbeCommands()
   const results = await executeCommands(credential, specs, {
     connectTimeoutMs: options.connectTimeoutMs,
@@ -128,17 +136,39 @@ export async function probeNode(
     maxOutputBytes: options.maxOutputBytes,
   })
 
-  // Extract results by index
-  const osRelease = results[0]?.result.stdout ?? ""
-  const idOutput = results[1]?.result.stdout.trim() ?? ""
-  const sudoResult = results[2]
-  const systemctlPath = results[3]?.result.stdout.trim() ?? ""
-  const systemRunning = results[4]?.result.stdout.trim() ?? ""
-  const exportfsPath = results[5]?.result.stdout.trim() ?? ""
-  const mountNfsPath = results[6]?.result.stdout.trim() ?? ""
-  const ipOutput = results[7]?.result.stdout ?? ""
-  const dfOutput = results[8]?.result.stdout ?? ""
-  const firewallOutput = results[9]?.result.stdout.trim() ?? ""
+  const result = buildNodeProbeResult({
+    credential,
+    results,
+    probedAt: new Date().toISOString(),
+  })
+
+  logger.info(
+    {
+      host: credential.host,
+      osFamily: result.osFamily,
+      sshOk: result.sshOk,
+      sudoOk: result.sudoOk,
+      systemdOk: result.systemdOk,
+      nfsServerInstalled: result.nfsServerInstalled,
+      nfsClientInstalled: result.nfsClientInstalled,
+      primaryIp: result.primaryIp,
+    },
+    "probeNode: completed",
+  )
+
+  return result
+}
+
+export function buildNodeProbeResult(input: NodeProbeResultInput): NodeProbeResult {
+  const osRelease = input.results[0]?.result.stdout ?? ""
+  const sudoResult = input.results[2]
+  const systemctlPath = input.results[3]?.result.stdout.trim() ?? ""
+  const systemRunning = input.results[4]?.result.stdout.trim() ?? ""
+  const exportfsPath = input.results[5]?.result.stdout.trim() ?? ""
+  const mountNfsPath = input.results[6]?.result.stdout.trim() ?? ""
+  const ipOutput = input.results[7]?.result.stdout ?? ""
+  const dfOutput = input.results[8]?.result.stdout ?? ""
+  const firewallOutput = input.results[9]?.result.stdout.trim() ?? ""
 
   const osInfo = parseOsRelease(osRelease)
   const ipAddresses = parseIpAddresses(ipOutput)
@@ -147,17 +177,17 @@ export async function probeNode(
   const firewallInfo = parseFirewall(firewallOutput)
   const packageManager = detectPackageManager(osInfo.family)
 
-  const sshOk = results.length > 0 && results[0].result.exitCode === 0
+  const sshOk = input.results.length > 0
   const sshError =
-    results.length === 0 ? "No probe results — SSH connection may have failed." : null
+    input.results.length === 0 ? "No probe results — SSH connection may have failed." : null
 
-  const sudoOk = sudoResult?.result.exitCode === 0
+  const sudoOk = (sudoResult?.result.exitCode ?? 1) === 0
   const sudoError = sudoOk ? null : sudoResult?.result.stderr.trim() || "sudo not available"
 
   const systemdOk = systemctlPath.length > 0 && !systemRunning.includes("unknown")
 
   return {
-    nodeId: credential.id,
+    nodeId: input.credential.id,
     sshOk,
     sshError,
     osFamily: osInfo.family,
@@ -172,10 +202,10 @@ export async function probeNode(
     firewallType: firewallInfo.type,
     firewallActive: firewallInfo.active,
     ipAddresses,
-    primaryIp,
+    primaryIp: primaryIp ?? null,
     diskSummary,
-    packageManager,
-    probedAt: new Date().toISOString(),
+    packageManager: packageManager ?? null,
+    probedAt: input.probedAt,
   }
 }
 
@@ -184,22 +214,23 @@ type OsInfo = { family: string | null; version: string | null; prettyName: strin
 function parseOsRelease(raw: string): OsInfo {
   const lines = raw.split("\n")
   let id = ""
-  let versionId = ""
-  let prettyName = ""
+  let versionId: string | null = null
+  let prettyName: string | null = null
 
   for (const line of lines) {
     const match = line.match(/^(\w+)="?([^"]*)"?$/)
     if (match === null) continue
-    const [, key, value] = match
+    const key = match[1] ?? ""
+    const value = match[2] ?? ""
     switch (key) {
       case "ID":
         id = value
         break
       case "VERSION_ID":
-        versionId = value
+        versionId = value || null
         break
       case "PRETTY_NAME":
-        prettyName = value
+        prettyName = value || null
         break
     }
   }
@@ -207,8 +238,8 @@ function parseOsRelease(raw: string): OsInfo {
   const family = mapOsFamily(id)
   return {
     family,
-    version: versionId || null,
-    prettyName: prettyName || null,
+    version: versionId,
+    prettyName,
   }
 }
 
@@ -260,7 +291,7 @@ function parseIpAddresses(raw: string): readonly string[] {
   for (const line of lines) {
     // ip -o addr show format: <num>: <iface> inet <ip>/<prefix> ...
     const match = line.match(/inet\s+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/)
-    if (match !== null && match[1] !== "127.0.0.1") {
+    if (match !== null && match[1] !== undefined && match[1] !== "127.0.0.1") {
       addresses.push(match[1])
     }
   }
@@ -272,17 +303,17 @@ function parseDfOutput(raw: string): readonly DiskInfo[] {
   const lines = raw.split("\n")
   // Skip header line
   for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim()
+    const line = lines[i]?.trim() ?? ""
     if (line.length === 0) continue
     const parts = line.split(/\s+/)
     if (parts.length >= 6) {
       disks.push({
-        filesystem: parts[0],
-        mountPoint: parts[5],
-        total: parts[1],
-        used: parts[2],
-        available: parts[3],
-        usePercent: parts[4],
+        filesystem: parts[0] ?? "",
+        mountPoint: parts[5] ?? "",
+        total: parts[1] ?? "",
+        used: parts[2] ?? "",
+        available: parts[3] ?? "",
+        usePercent: parts[4] ?? "",
       })
     }
   }

@@ -55,6 +55,7 @@
 
 .share-form .button,
 .share-form .form-error,
+.share-form .form-success,
 .share-form .form-heading,
 .share-form .toggle-field,
 .share-form .interconnect-panel {
@@ -144,6 +145,93 @@
   padding: 0 var(--space-2);
 }
 
+.failure-details {
+  display: grid;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 480px;
+  justify-items: end;
+}
+
+.failure-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: color-mix(in srgb, var(--status-error) 10%, transparent);
+  color: var(--status-error);
+  border: 1px solid color-mix(in srgb, var(--status-error) 24%, transparent);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 120ms ease-out;
+}
+
+.failure-summary:hover {
+  background: color-mix(in srgb, var(--status-error) 18%, transparent);
+}
+
+.failure-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-elevated);
+  display: grid;
+  gap: var(--space-2);
+  text-align: right;
+  width: 100%;
+}
+
+.failure-list li {
+  display: grid;
+  gap: 2px;
+}
+
+.failure-list strong {
+  font-weight: 500;
+  color: var(--status-error);
+  font-size: 13px;
+}
+
+.failure-list p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  word-break: break-word;
+}
+
+.interconnect-result {
+  display: grid;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 520px;
+  justify-items: end;
+}
+
+.interconnect-detail-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: end;
+}
+
+.interconnect-mount-detail {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-elevated);
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow-x: auto;
+  max-width: 100%;
+  text-align: right;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .share-status-toggle {
   display: inline-flex;
   background: none;
@@ -182,5 +270,25 @@
 
   .share-row-side {
     justify-items: start;
+  }
+
+  .failure-details {
+    justify-items: start;
+  }
+
+  .failure-list {
+    text-align: left;
+  }
+
+  .interconnect-result {
+    justify-items: start;
+  }
+
+  .interconnect-detail-grid {
+    justify-content: start;
+  }
+
+  .interconnect-mount-detail {
+    text-align: left;
   }
 }
