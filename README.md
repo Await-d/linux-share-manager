@@ -103,6 +103,27 @@ bun run lint
 bun run typecheck
 bun test
 bun run build
+bun run release:package
+```
+
+## Versioning And Release Packages
+
+The canonical application version is the `version` field in [package.json](package.json). The backend exposes this value through `GET /api/health`, together with optional build metadata from `LSM_BUILD_COMMIT` and `LSM_BUILD_TIME`.
+
+`bun run release:package` builds the latest frontend and backend output, then writes a versioned archive and manifest under `packages/`, for example:
+
+```text
+packages/linux-share-manager-v0.1.0.tar.gz
+packages/linux-share-manager-v0.1.0.json
+```
+
+To run an extracted package:
+
+```bash
+tar -xzf packages/linux-share-manager-v0.1.0.tar.gz
+cd linux-share-manager-v0.1.0
+bun install --production
+LSM_HOST=0.0.0.0 LSM_PORT=18088 bun run start
 ```
 
 ## Environment Variables
@@ -120,6 +141,8 @@ bun run build
 | `LSM_SECURE_COOKIE` | `false` | Enables Secure cookies |
 | `LSM_WEB_ORIGIN` | `http://127.0.0.1:5173` | Same-origin guard for write requests |
 | `LSM_API_TARGET` | `http://127.0.0.1:18188` | Vite development proxy target |
+| `LSM_BUILD_COMMIT` | unset | Optional source commit shown by `/api/health` |
+| `LSM_BUILD_TIME` | unset | Optional build timestamp shown by `/api/health` |
 
 ## API Surface
 

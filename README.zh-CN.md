@@ -103,6 +103,27 @@ bun run lint
 bun run typecheck
 bun test
 bun run build
+bun run release:package
+```
+
+## 版本号与发布包
+
+应用版本号以根目录 [package.json](package.json) 的 `version` 字段为唯一来源。后端会在 `GET /api/health` 中返回这个版本号，并可同时返回 `LSM_BUILD_COMMIT`、`LSM_BUILD_TIME` 提供的构建元数据。
+
+`bun run release:package` 会构建最新前端与后端产物，并在 `packages/` 目录下写入带版本号的软件包和 manifest，例如：
+
+```text
+packages/linux-share-manager-v0.1.0.tar.gz
+packages/linux-share-manager-v0.1.0.json
+```
+
+解压后的软件包可以这样启动：
+
+```bash
+tar -xzf packages/linux-share-manager-v0.1.0.tar.gz
+cd linux-share-manager-v0.1.0
+bun install --production
+LSM_HOST=0.0.0.0 LSM_PORT=18088 bun run start
 ```
 
 ## 环境变量
@@ -120,6 +141,8 @@ bun run build
 | `LSM_SECURE_COOKIE` | `false` | 是否启用 Secure cookie |
 | `LSM_WEB_ORIGIN` | `http://127.0.0.1:5173` | 写请求同源校验来源 |
 | `LSM_API_TARGET` | `http://127.0.0.1:18188` | Vite 开发代理目标 |
+| `LSM_BUILD_COMMIT` | 无 | `/api/health` 可展示的可选源码提交 |
+| `LSM_BUILD_TIME` | 无 | `/api/health` 可展示的可选构建时间 |
 
 ## API 概览
 

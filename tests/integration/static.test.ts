@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { createApp } from "../../src/server/app"
 import type { AppConfig } from "../../src/server/config"
 import { createTestDatabase } from "../../src/server/db/testing"
+import { getAppVersionInfo } from "../../src/shared/version"
 
 const cleanupTasks: Array<() => Promise<void> | void> = []
 
@@ -52,7 +53,11 @@ describe("single-port static serving", () => {
     expect(pageResponse.headers.get("content-type")).toContain("text/html")
     await expect(pageResponse.text()).resolves.toContain("Linux Share Manager")
     expect(apiResponse.status).toBe(200)
-    await expect(apiResponse.json()).resolves.toEqual({ status: "ok", initialized: false })
+    await expect(apiResponse.json()).resolves.toEqual({
+      status: "ok",
+      initialized: false,
+      version: getAppVersionInfo(),
+    })
   })
 
   it("keeps missing API routes as JSON 404 responses", async () => {

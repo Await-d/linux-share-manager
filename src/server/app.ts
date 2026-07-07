@@ -1,4 +1,5 @@
 import { Hono } from "hono"
+import { getAppVersionInfo } from "../shared/version"
 import { AuditService } from "./audit/service"
 import { AuthService } from "./auth/service"
 import type { AppConfig } from "./config"
@@ -38,7 +39,9 @@ export function createApp(options: CreateAppOptions = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
   app.use("/api/*", sameOriginGuard(config))
-  app.get("/api/health", (context) => context.json({ status: "ok", initialized: auth.hasUsers() }))
+  app.get("/api/health", (context) =>
+    context.json({ status: "ok", initialized: auth.hasUsers(), version: getAppVersionInfo() }),
+  )
 
   registerAuthRoutes({ app, auth, config })
   registerNodeRoutes({ app, auth, config, nodes })
