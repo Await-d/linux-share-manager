@@ -28,15 +28,15 @@ bun run dev:web
 
 默认服务：
 
-- API: `http://127.0.0.1:18088`
+- API: `http://127.0.0.1:18188`
 - Web: `http://127.0.0.1:5173`
 - SQLite: `./data/linux-share-manager.sqlite`
 
-如果 `18088` 后续也被占用，可以临时指定：
+开发环境默认使用 `18188`，避免和 Docker 部署端口 `18088` 冲突。如果 `18188` 后续也被占用，可以临时指定：
 
 ```bash
-LSM_PORT=18089 bun run dev:server
-LSM_API_TARGET=http://127.0.0.1:18089 bun run dev:web
+LSM_PORT=18189 bun run dev:server
+LSM_API_TARGET=http://127.0.0.1:18189 bun run dev:web
 ```
 
 ## Docker 单端口部署
@@ -92,7 +92,7 @@ bun run build
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `LSM_HOST` | `127.0.0.1` | API 监听地址 |
-| `LSM_PORT` | `18088` | API 监听端口 |
+| `LSM_PORT` | `18188` | 开发 API 监听端口；Docker 部署在 compose 中显式使用 `18088` |
 | `LSM_DATABASE_PATH` | `./data/linux-share-manager.sqlite` | SQLite 数据库路径 |
 | `LSM_STATIC_ROOT` | `./dist/web` | 生产前端静态资源目录 |
 | `LSM_SECRET_KEY` | 无 | SSH 凭据加密密钥；保存密码或私钥时必须设置 |
@@ -101,7 +101,7 @@ bun run build
 | `LSM_SSH_CONNECT_TIMEOUT_MS` | `5000` | 节点快速连接测试超时 |
 | `LSM_SECURE_COOKIE` | `false` | 是否启用 Secure cookie |
 | `LSM_WEB_ORIGIN` | `http://127.0.0.1:5173` | 写请求同源校验来源 |
-| `LSM_API_TARGET` | `http://127.0.0.1:18088` | Vite 开发代理目标 |
+| `LSM_API_TARGET` | `http://127.0.0.1:18188` | Vite 开发代理目标 |
 
 ## 当前 API
 

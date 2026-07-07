@@ -2,7 +2,7 @@ import { z } from "zod"
 
 const ConfigSchema = z.object({
   host: z.string().default("127.0.0.1"),
-  port: z.coerce.number().int().min(1).max(65535).default(18_088),
+  port: z.coerce.number().int().min(1).max(65535).default(18_188),
   databasePath: z.string().default("./data/linux-share-manager.sqlite"),
   staticRoot: z.string().default("./dist/web"),
   secretKey: z.string().min(1).optional(),

@@ -1,8 +1,10 @@
 .agentdocs/runtime/
 .codebuddy/
+.omo/
 .codegraph
 node_modules/
 dist/
 src/web/dist/
 data/
 .env
+bun.lock
