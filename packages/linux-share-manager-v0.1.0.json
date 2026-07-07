@@ -1,0 +1,23 @@
+{
+  "name": "linux-share-manager",
+  "version": "0.1.0",
+  "builtAt": "2026-07-07T06:38:23.891Z",
+  "archive": "linux-share-manager-v0.1.0.tar.gz",
+  "source": {
+    "commit": "434149189ebe",
+    "dirty": false
+  },
+  "installCommand": "bun install --production",
+  "startCommand": "bun run start",
+  "contents": [
+    "dist/server",
+    "dist/web",
+    "release-manifest.json",
+    "package.json",
+    "README.md",
+    "README.zh-CN.md",
+    "DOCKER_DEPLOYMENT.md",
+    "Dockerfile",
+    "docker-compose.yml"
+  ]
+}
