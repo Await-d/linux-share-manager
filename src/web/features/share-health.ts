@@ -1,6 +1,8 @@
 import type { InterconnectivityResponse } from "../../shared/schemas/connectivity"
 import type { ShareAccessMode, ShareStatus } from "../../shared/schemas/shares"
 
+export type StatusTone = "success" | "warning" | "error" | "info" | "neutral"
+
 export type ApplyHealthMessageInput = {
   readonly healthStatus: string
   readonly summary: string
@@ -43,6 +45,31 @@ export function interconnectivityPassed(
     (accessMode === "read_only" || result.writeTest !== "failed") &&
     result.exportStatus !== "not_exported"
   )
+}
+
+export function interconnectivityTone(
+  result: InterconnectivityResponse,
+  accessMode: ShareAccessMode,
+): StatusTone {
+  if (interconnectivityPassed(result, accessMode)) {
+    return "success"
+  }
+
+  return result.crossReachable === "ok" ? "warning" : "error"
+}
+
+export function writeTestBadge(
+  writeTest: InterconnectivityResponse["writeTest"],
+  accessMode: ShareAccessMode,
+): { readonly tone: StatusTone; readonly label: string } {
+  if (writeTest === "ok") {
+    return { tone: "success", label: "通过" }
+  }
+  if (writeTest === "failed" && accessMode === "read_only") {
+    return { tone: "neutral", label: "只读预期失败" }
+  }
+
+  return { tone: "error", label: "失败" }
 }
 
 export function formatInterconnectivitySuccessMessage(accessMode: ShareAccessMode): string {

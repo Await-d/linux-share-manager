@@ -1,3 +1,5 @@
+import type { ShareAccessMode } from "../../shared/schemas/shares"
+
 export type ExportStatus = "unknown" | "ok" | "not_exported"
 
 export type MountAccessStatus = "unknown" | "ok" | "failed"
@@ -9,6 +11,7 @@ type DeriveExportStatusInput = {
   readonly mountDetail: string | null
   readonly readTest: MountAccessStatus
   readonly writeTest: MountAccessStatus
+  readonly accessMode?: ShareAccessMode
 }
 
 type DerivedExportStatus = {
@@ -36,12 +39,44 @@ export function deriveExportStatus(input: DeriveExportStatusInput): DerivedExpor
 }
 
 function isVerifiedMountedExport(input: DeriveExportStatusInput): boolean {
+  if (input.mountDetail === null) {
+    return false
+  }
+
+  const mountDetail = input.mountDetail
+  const writeVerified = input.accessMode === "read_only" || input.writeTest === "ok"
   return (
     input.readTest === "ok" &&
-    input.writeTest === "ok" &&
-    input.mountDetail !== null &&
+    writeVerified &&
     input.sourceHosts.some((sourceHost) =>
-      input.mountDetail?.includes(`${sourceHost}:${input.sourcePath}`),
+      mountDetailIncludesSource(mountDetail, sourceHost, input.sourcePath),
     )
   )
+}
+
+function mountDetailIncludesSource(
+  mountDetail: string,
+  sourceHost: string,
+  sourcePath: string,
+): boolean {
+  return mountDetail.split("\n").some((line) => {
+    const mountSource = mountSourceFromLine(line)
+    return mountSource?.host === sourceHost && mountSource.path === sourcePath
+  })
+}
+
+function mountSourceFromLine(
+  line: string,
+): { readonly host: string; readonly path: string } | null {
+  const detail = line.includes("→") ? (line.split("→").at(1)?.trim() ?? "") : line.trim()
+  const source = detail.split(/\s+/).at(0) ?? ""
+  const separatorIndex = source.indexOf(":/")
+  if (separatorIndex <= 0) {
+    return null
+  }
+
+  return {
+    host: source.slice(0, separatorIndex),
+    path: source.slice(separatorIndex + 1),
+  }
 }

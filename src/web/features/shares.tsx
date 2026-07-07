@@ -49,7 +49,9 @@ import {
   formatApplyHealthMessage,
   formatInterconnectivitySuccessMessage,
   interconnectivityPassed,
+  interconnectivityTone,
   shareStatusFromHealth,
+  writeTestBadge,
 } from "./share-health"
 
 const ACCESS_MODE_OPTIONS = [
@@ -662,6 +664,7 @@ function ShareRow({ share, nodes, onDeleted, onEdit, onStatusChange }: ShareRowP
       const result = await checkInterconnectivity(share.sourceNodeId, share.targetNodeId, {
         sourcePath: share.sourcePath,
         targetPath: share.targetPath,
+        accessMode: share.accessMode,
       })
       setInterconnectResult(result)
       if (interconnectivityPassed(result, share.accessMode)) {
@@ -702,7 +705,9 @@ function ShareRow({ share, nodes, onDeleted, onEdit, onStatusChange }: ShareRowP
           <StatusBadge tone={share.accessMode === "read_write" ? "success" : "neutral"}>
             {share.accessMode === "read_write" ? "读写" : "只读"}
           </StatusBadge>
-          {share.autoMount ? <StatusBadge tone="neutral">自动挂载</StatusBadge> : null}
+          <StatusBadge tone={share.autoMount ? "info" : "neutral"}>
+            {share.autoMount ? "自动挂载已启用" : "手动挂载"}
+          </StatusBadge>
           <StatusBadge tone={STATUS_TONES[share.status] ?? "neutral"}>
             {STATUS_LABELS[share.status] ?? share.status}
           </StatusBadge>
@@ -827,7 +832,9 @@ function ShareRow({ share, nodes, onDeleted, onEdit, onStatusChange }: ShareRowP
           <StatusBadge tone={preCheckTone}>前置检查: {preCheckResult}</StatusBadge>
         ) : null}
         {statusInfo !== null ? <StatusBadge tone="success">{statusInfo}</StatusBadge> : null}
-        {interconnectResult !== null ? <InterconnectDetails result={interconnectResult} /> : null}
+        {interconnectResult !== null ? (
+          <InterconnectDetails accessMode={share.accessMode} result={interconnectResult} />
+        ) : null}
         {planView !== null && share.status === "partial_failed" ? (
           <FailureDetails
             plan={planView}
@@ -892,17 +899,12 @@ function FailureDetails({ plan, show, onToggle }: FailureDetailsProps) {
 
 type InterconnectDetailsProps = {
   readonly result: InterconnectivityResponse
+  readonly accessMode: ShareAccessMode
 }
 
-function InterconnectDetails({ result }: InterconnectDetailsProps) {
-  const allOk =
-    result.crossReachable === "ok" &&
-    result.mountStatus === "mounted" &&
-    result.readTest !== "failed" &&
-    result.writeTest !== "failed" &&
-    result.exportStatus !== "not_exported"
-
-  const tone = allOk ? "success" : result.crossReachable === "ok" ? "warning" : "error"
+function InterconnectDetails({ result, accessMode }: InterconnectDetailsProps) {
+  const tone = interconnectivityTone(result, accessMode)
+  const writeBadge = writeTestBadge(result.writeTest, accessMode)
 
   return (
     <div className="interconnect-result">
@@ -933,9 +935,7 @@ function InterconnectDetails({ result }: InterconnectDetailsProps) {
           </StatusBadge>
         ) : null}
         {result.writeTest !== "unknown" ? (
-          <StatusBadge tone={result.writeTest === "ok" ? "success" : "error"}>
-            写入测试: {result.writeTest === "ok" ? "通过" : "失败"}
-          </StatusBadge>
+          <StatusBadge tone={writeBadge.tone}>写入测试: {writeBadge.label}</StatusBadge>
         ) : null}
       </div>
       {result.exportDetail !== null && result.exportDetail.length > 0 ? (

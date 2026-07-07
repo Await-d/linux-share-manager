@@ -28,6 +28,7 @@ const PairParamSchema = z.object({
 const QuerySchema = z.object({
   sourcePath: z.string().optional(),
   targetPath: z.string().optional(),
+  accessMode: z.enum(["read_only", "read_write"]).optional(),
 })
 
 export function registerInterconnectRoutes(options: InterconnectRouteOptions): void {
@@ -414,14 +415,18 @@ export function registerInterconnectRoutes(options: InterconnectRouteOptions): v
           source.primaryIp === null || source.primaryIp === source.host
             ? [source.host]
             : [source.host, source.primaryIp]
-        const derivedExport = deriveExportStatus({
+        const deriveInput = {
           sourceHosts,
           sourcePath: query.sourcePath,
           exportOutput: exportProbeOutput,
           mountDetail,
           readTest,
           writeTest,
-        })
+        }
+        const derivedExport =
+          query.accessMode === undefined
+            ? deriveExportStatus(deriveInput)
+            : deriveExportStatus({ ...deriveInput, accessMode: query.accessMode })
         exportStatus = derivedExport.status
         exportDetail = derivedExport.detail
       }
@@ -453,7 +458,7 @@ export function registerInterconnectRoutes(options: InterconnectRouteOptions): v
       if (writeTest === "ok") {
         parts.push("写入测试通过")
       } else if (writeTest === "failed") {
-        parts.push("写入测试失败")
+        parts.push(query.accessMode === "read_only" ? "写入测试按只读预期拒绝" : "写入测试失败")
       }
 
       const summary = parts.join("；")

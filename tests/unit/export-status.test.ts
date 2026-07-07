@@ -38,4 +38,41 @@ describe("NFS export status derivation", () => {
     expect(result.status).toBe("ok")
     expect(result.detail).toContain("已通过目标端挂载与读写测试验证")
   })
+
+  it("trusts read-only mounted sources without write access when exportfs misses the path", () => {
+    // Given: a read-only NFS mount can be read but rejects the write probe.
+    const mountDetail = "192.168.123.5:/volume2/4t_1/1.Project nfs ro,relatime,vers=3"
+
+    // When: the export status is derived for a read-only share.
+    const result = deriveExportStatus({
+      sourceHosts: ["192.168.123.5"],
+      sourcePath: "/volume2/4t_1/1.Project",
+      exportOutput: "__NOT_EXPORTED__",
+      mountDetail,
+      readTest: "ok",
+      writeTest: "failed",
+      accessMode: "read_only",
+    })
+
+    // Then: expected write denial does not hide the verified export.
+    expect(result.status).toBe("ok")
+  })
+
+  it("does not trust a mounted source whose path only shares a prefix", () => {
+    // Given: the target is mounted from a different export with the same text prefix.
+    const mountDetail = "192.168.123.5:/srv/share-old nfs rw,relatime,vers=3"
+
+    // When: the checked source path is shorter than the mounted export path.
+    const result = deriveExportStatus({
+      sourceHosts: ["192.168.123.5"],
+      sourcePath: "/srv/share",
+      exportOutput: "__NOT_EXPORTED__",
+      mountDetail,
+      readTest: "ok",
+      writeTest: "ok",
+    })
+
+    // Then: the prefix match is rejected as the wrong export.
+    expect(result.status).toBe("not_exported")
+  })
 })

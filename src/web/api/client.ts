@@ -32,6 +32,7 @@ import {
   HealthCheckResponseSchema,
   type PlanResponse,
   PlanResponseSchema,
+  type ShareAccessMode,
   type ShareResponse,
   ShareResponseSchema,
   type UpdateShareRequest,
@@ -247,7 +248,11 @@ export async function getAuditLogs(): Promise<{ logs: readonly unknown[] }> {
 export async function checkInterconnectivity(
   sourceId: string,
   targetId: string,
-  options?: { readonly sourcePath?: string; readonly targetPath?: string },
+  options?: {
+    readonly sourcePath?: string
+    readonly targetPath?: string
+    readonly accessMode?: ShareAccessMode
+  },
 ): Promise<InterconnectivityResponse> {
   const searchParams = new URLSearchParams()
   if (options?.sourcePath) {
@@ -255,6 +260,9 @@ export async function checkInterconnectivity(
   }
   if (options?.targetPath) {
     searchParams.set("targetPath", options.targetPath)
+  }
+  if (options?.accessMode) {
+    searchParams.set("accessMode", options.accessMode)
   }
   const query = searchParams.toString()
   const url =
