@@ -113,15 +113,15 @@ bun run release:package
 `bun run release:package` 会构建最新前端与后端产物，并在 `packages/` 目录下写入带版本号的软件包和 manifest，例如：
 
 ```text
-packages/linux-share-manager-v0.1.0.tar.gz
-packages/linux-share-manager-v0.1.0.json
+packages/linux-share-manager-v0.1.1.tar.gz
+packages/linux-share-manager-v0.1.1.json
 ```
 
 解压后的软件包可以这样启动：
 
 ```bash
-tar -xzf packages/linux-share-manager-v0.1.0.tar.gz
-cd linux-share-manager-v0.1.0
+tar -xzf packages/linux-share-manager-v0.1.1.tar.gz
+cd linux-share-manager-v0.1.1
 bun install --production
 LSM_HOST=0.0.0.0 LSM_PORT=18088 bun run start
 ```

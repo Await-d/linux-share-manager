@@ -113,15 +113,15 @@ The canonical application version is the `version` field in [package.json](packa
 `bun run release:package` builds the latest frontend and backend output, then writes a versioned archive and manifest under `packages/`, for example:
 
 ```text
-packages/linux-share-manager-v0.1.0.tar.gz
-packages/linux-share-manager-v0.1.0.json
+packages/linux-share-manager-v0.1.1.tar.gz
+packages/linux-share-manager-v0.1.1.json
 ```
 
 To run an extracted package:
 
 ```bash
-tar -xzf packages/linux-share-manager-v0.1.0.tar.gz
-cd linux-share-manager-v0.1.0
+tar -xzf packages/linux-share-manager-v0.1.1.tar.gz
+cd linux-share-manager-v0.1.1
 bun install --production
 LSM_HOST=0.0.0.0 LSM_PORT=18088 bun run start
 ```
