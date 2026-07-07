@@ -21,6 +21,9 @@ const AbsoluteLinuxPathSchema = z
   .min(1)
   .max(1024)
   .regex(/^\/[^\0]*$/)
+  .refine((path) => !path.split("/").some((part) => part === "." || part === ".."), {
+    message: "Path cannot contain . or .. components.",
+  })
 
 export const CreateShareRequestSchema = z.object({
   name: z.string().trim().min(1).max(100),

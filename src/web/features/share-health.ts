@@ -1,4 +1,5 @@
-import type { ShareStatus } from "../../shared/schemas/shares"
+import type { InterconnectivityResponse } from "../../shared/schemas/connectivity"
+import type { ShareAccessMode, ShareStatus } from "../../shared/schemas/shares"
 
 export type ApplyHealthMessageInput = {
   readonly healthStatus: string
@@ -29,4 +30,23 @@ export function formatApplyHealthMessage(input: ApplyHealthMessageInput): string
       ? ""
       : `；错误：${input.errorMessage}`
   return `执行命令已完成，但健康检查未通过：${input.summary}${errorSuffix}`
+}
+
+export function interconnectivityPassed(
+  result: InterconnectivityResponse,
+  accessMode: ShareAccessMode,
+): boolean {
+  return (
+    result.crossReachable === "ok" &&
+    result.mountStatus === "mounted" &&
+    result.readTest !== "failed" &&
+    (accessMode === "read_only" || result.writeTest !== "failed") &&
+    result.exportStatus !== "not_exported"
+  )
+}
+
+export function formatInterconnectivitySuccessMessage(accessMode: ShareAccessMode): string {
+  return accessMode === "read_only"
+    ? "检查通过：NFS 连通、已挂载、读取正常。"
+    : "检查通过：NFS 连通、已挂载、读写正常。"
 }

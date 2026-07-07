@@ -186,17 +186,27 @@ describe("share plan builder", () => {
 
     // When: the target systemd step is generated.
     const plan = generateSharePlan(share, SOURCE_NODE_WITH_PASSWORD_SUDO, TARGET_NODE)
-    const commands = commandsForStep(plan, "write-systemd-units")
+    const step = plan.steps.find((candidate) => candidate.key === "write-systemd-units")
+    expect(step).toBeDefined()
+    if (step === undefined) {
+      throw new Error("expected write-systemd-units step")
+    }
+    const commands = step.commands
     const combinedScript = commands.map((command) => command.args.join(" ")).join("\n")
+    const rollbackArgs = step.rollbackCommands.map((command) => command.args.join(" ")).join("\n")
 
     // Then: the mount unit is written and started while stale automount config is only cleaned.
     expect(combinedScript).toContain("tee '/etc/systemd/system/mnt-project.mount'")
     expect(combinedScript).not.toContain("tee '/etc/systemd/system/mnt-project.automount'")
     expect(combinedScript).not.toContain("enable' 'mnt-project.automount")
     expect(combinedScript).not.toContain("start' 'mnt-project.automount")
+    expect(combinedScript).toContain('grep -Fq "share_id=$share_id"')
+    expect(combinedScript).toContain(share.id)
     expect(combinedScript).toContain('disable "$automount_unit"')
     expect(combinedScript).toContain('rm -f "$automount_path"')
     expect(commands.some((command) => command.args.includes("start"))).toBe(true)
     expect(commands.some((command) => command.args.includes("mnt-project.mount"))).toBe(true)
+    expect(rollbackArgs).toContain("/etc/systemd/system/mnt-project.mount")
+    expect(rollbackArgs).not.toContain("/etc/systemd/system/mnt-project.automount")
   })
 })

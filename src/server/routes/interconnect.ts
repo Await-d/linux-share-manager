@@ -10,6 +10,8 @@ import type { AppEnv } from "../middleware/auth"
 import { requireAuth } from "../middleware/auth"
 import { testTcpConnection } from "../nodes/connectivity"
 import type { NodeRepository } from "../nodes/repository"
+import { deriveExportStatus } from "../shares/export-status"
+import { isReachableProbeOutput } from "../shares/reachability"
 
 type InterconnectRouteOptions = {
   readonly app: Hono<AppEnv>
@@ -112,6 +114,7 @@ export function registerInterconnectRoutes(options: InterconnectRouteOptions): v
       let mountDetail: string | null = null
       let exportStatus: "unknown" | "ok" | "not_exported" = "unknown"
       let exportDetail: string | null = null
+      let exportProbeOutput: string | null = null
 
       if (sourceCred !== null) {
         try {
@@ -166,7 +169,7 @@ export function registerInterconnectRoutes(options: InterconnectRouteOptions): v
             )
             const crossOutput =
               crossResults.length > 0 ? (crossResults[0]?.result.stdout.trim() ?? "") : ""
-            crossReachable = crossOutput.includes("REACHABLE") ? "ok" : "failed"
+            crossReachable = isReachableProbeOutput(crossOutput) ? "ok" : "failed"
 
             // Check NFS export on source node — is sourcePath actually exported?
             if (query.sourcePath) {
@@ -195,13 +198,7 @@ export function registerInterconnectRoutes(options: InterconnectRouteOptions): v
                 )
                 const exportOutput =
                   exportResults.length > 0 ? (exportResults[0]?.result.stdout.trim() ?? "") : ""
-                if (exportOutput.length === 0 || exportOutput.includes("__NOT_EXPORTED__")) {
-                  exportStatus = "not_exported"
-                  exportDetail = `源路径 ${query.sourcePath} 未在 /etc/exports 中导出。`
-                } else {
-                  exportStatus = "ok"
-                  exportDetail = exportOutput
-                }
+                exportProbeOutput = exportOutput
               } catch (err) {
                 logger.warn({ err, sourceId }, "interconnect: exportfs check failed")
                 exportStatus = "unknown"
@@ -410,6 +407,23 @@ export function registerInterconnectRoutes(options: InterconnectRouteOptions): v
           timeoutMs: timeout,
         })
         crossReachable = reachable ? "ok" : "failed"
+      }
+
+      if (query.sourcePath !== undefined && exportProbeOutput !== null) {
+        const sourceHosts =
+          source.primaryIp === null || source.primaryIp === source.host
+            ? [source.host]
+            : [source.host, source.primaryIp]
+        const derivedExport = deriveExportStatus({
+          sourceHosts,
+          sourcePath: query.sourcePath,
+          exportOutput: exportProbeOutput,
+          mountDetail,
+          readTest,
+          writeTest,
+        })
+        exportStatus = derivedExport.status
+        exportDetail = derivedExport.detail
       }
 
       // Build summary

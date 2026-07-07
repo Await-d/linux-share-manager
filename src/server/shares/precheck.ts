@@ -21,6 +21,7 @@ import { executeCommands } from "../executor/ssh-executor"
 import { logger } from "../logger"
 import { testTcpConnection } from "../nodes/connectivity"
 import type { NodeCredential } from "../nodes/repository"
+import { isReachableProbeOutput } from "./reachability"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -405,7 +406,7 @@ export async function runPreCheck(
       )
       const crossOutput =
         crossResults.length > 0 ? (crossResults[0]?.result.stdout.trim() ?? "") : ""
-      const targetCanReach = crossOutput.includes("REACHABLE")
+      const targetCanReach = isReachableProbeOutput(crossOutput)
 
       if (!targetCanReach) {
         warnings.push(
@@ -513,7 +514,7 @@ function parseRpcNfsPorts(rpcOutput: string): readonly number[] {
   return ports
 }
 
-function parseNfsVersions(rawOutput: string): NfsVersionInfo {
+export function parseNfsVersions(rawOutput: string): NfsVersionInfo {
   if (rawOutput.length === 0 || rawOutput.includes("NO_NFS_VERSIONS")) {
     return emptyNfsVersionInfo()
   }

@@ -23,4 +23,14 @@ describe("share schemas", () => {
     )
     expect(UpdateShareRequestSchema.parse({ nfsVersion: "auto" }).nfsVersion).toBe("auto")
   })
+
+  it("rejects paths with dot or parent directory components", () => {
+    expect(() =>
+      CreateShareRequestSchema.parse({ ...SHARE_INPUT, sourcePath: "/srv/./share" }),
+    ).toThrow()
+    expect(() =>
+      CreateShareRequestSchema.parse({ ...SHARE_INPUT, targetPath: "/mnt/foo/../share" }),
+    ).toThrow()
+    expect(() => UpdateShareRequestSchema.parse({ sourcePath: "/srv/../share" })).toThrow()
+  })
 })

@@ -21,6 +21,7 @@ import { generateSharePlan, validatePaths } from "../plans/builder"
 import type { PlanRepository, PlanStepResult } from "../plans/repository"
 import { runPreCheck } from "../shares/precheck"
 import type { ShareRepository } from "../shares/repository"
+import { systemdEscapePath } from "../systemd/escape"
 
 type ShareRouteOptions = {
   readonly app: Hono<AppEnv>
@@ -691,31 +692,15 @@ export function registerShareRoutes(options: ShareRouteOptions): void {
         throw new AppError("SHARE_NOT_FOUND", "The requested share does not exist.", 404)
       }
 
-      logger.info({ shareId: id, shareName: share.name }, "disabling share automount")
+      logger.info(
+        { shareId: id, shareName: share.name, autoMount: share.autoMount },
+        "disabling share",
+      )
       const targetCred = options.nodes.findCredential(share.targetNodeId)
       if (targetCred !== null) {
-        const automountUnit = systemdEscapeName(`${share.targetPath}.automount`)
         await executeCommands(
           targetCred,
-          withSudoPassword(
-            [
-              {
-                executable: "systemctl",
-                args: ["stop", automountUnit],
-                sudo: true,
-                timeoutMs: 10_000,
-                preview: `systemctl stop ${automountUnit}`,
-              },
-              {
-                executable: "systemctl",
-                args: ["disable", automountUnit],
-                sudo: true,
-                timeoutMs: 5_000,
-                preview: `systemctl disable ${automountUnit}`,
-              },
-            ],
-            targetCred,
-          ),
+          withSudoPassword(buildShareControlCommands(share, "disable"), targetCred),
           {
             connectTimeoutMs: options.config.sshConnectTimeoutMs,
             defaultCommandTimeoutMs: 30_000,
@@ -748,31 +733,15 @@ export function registerShareRoutes(options: ShareRouteOptions): void {
         throw new AppError("SHARE_NOT_FOUND", "The requested share does not exist.", 404)
       }
 
-      logger.info({ shareId: id, shareName: share.name }, "enabling share automount")
+      logger.info(
+        { shareId: id, shareName: share.name, autoMount: share.autoMount },
+        "enabling share",
+      )
       const targetCred = options.nodes.findCredential(share.targetNodeId)
       if (targetCred !== null) {
-        const automountUnit = systemdEscapeName(`${share.targetPath}.automount`)
         await executeCommands(
           targetCred,
-          withSudoPassword(
-            [
-              {
-                executable: "systemctl",
-                args: ["enable", automountUnit],
-                sudo: true,
-                timeoutMs: 5_000,
-                preview: `systemctl enable ${automountUnit}`,
-              },
-              {
-                executable: "systemctl",
-                args: ["start", automountUnit],
-                sudo: true,
-                timeoutMs: 10_000,
-                preview: `systemctl start ${automountUnit}`,
-              },
-            ],
-            targetCred,
-          ),
+          withSudoPassword(buildShareControlCommands(share, "enable"), targetCred),
           {
             connectTimeoutMs: options.config.sshConnectTimeoutMs,
             defaultCommandTimeoutMs: 30_000,
@@ -808,7 +777,7 @@ export function registerShareRoutes(options: ShareRouteOptions): void {
       logger.info({ shareId: id, shareName: share.name }, "remounting share")
       const targetCred = options.nodes.findCredential(share.targetNodeId)
       if (targetCred !== null) {
-        const mountUnit = systemdEscapeName(`${share.targetPath}.mount`)
+        const mountUnit = `${systemdEscapePath(share.targetPath)}.mount`
         await executeCommands(
           targetCred,
           withSudoPassword(
@@ -849,6 +818,56 @@ export function registerShareRoutes(options: ShareRouteOptions): void {
   })
 }
 
+export function buildShareControlCommands(
+  share: { readonly targetPath: string; readonly autoMount: boolean },
+  action: "disable" | "enable",
+): readonly CommandSpec[] {
+  const unit = `${systemdEscapePath(share.targetPath)}.${share.autoMount ? "automount" : "mount"}`
+  if (action === "disable") {
+    return [
+      {
+        executable: "systemctl",
+        args: ["stop", unit],
+        sudo: true,
+        timeoutMs: 10_000,
+        preview: `systemctl stop ${unit}`,
+      },
+      ...(share.autoMount
+        ? [
+            {
+              executable: "systemctl",
+              args: ["disable", unit],
+              sudo: true,
+              timeoutMs: 5_000,
+              preview: `systemctl disable ${unit}`,
+            },
+          ]
+        : []),
+    ]
+  }
+
+  return [
+    ...(share.autoMount
+      ? [
+          {
+            executable: "systemctl",
+            args: ["enable", unit],
+            sudo: true,
+            timeoutMs: 5_000,
+            preview: `systemctl enable ${unit}`,
+          },
+        ]
+      : []),
+    {
+      executable: "systemctl",
+      args: ["start", unit],
+      sudo: true,
+      timeoutMs: 10_000,
+      preview: `systemctl start ${unit}`,
+    },
+  ]
+}
+
 /** Inject sudo password into commands that need it, based on the credential's auth type. */
 function withSudoPassword(
   commands: readonly CommandSpec[],
@@ -869,26 +888,4 @@ function withSudoPassword(
 function truncateForLog(value: string, maxChars: number = 2_000): string {
   const trimmed = value.trim()
   return trimmed.length <= maxChars ? trimmed : `${trimmed.slice(0, maxChars)}...`
-}
-
-function systemdEscapeName(path: string): string {
-  let result = ""
-  for (const ch of path) {
-    if (ch === "/") {
-      result += "-"
-    } else if (ch === "-") {
-      result += "\\x2d"
-    } else if (
-      (ch >= "a" && ch <= "z") ||
-      (ch >= "A" && ch <= "Z") ||
-      (ch >= "0" && ch <= "9") ||
-      ch === "_" ||
-      ch === "."
-    ) {
-      result += ch
-    } else {
-      result += `\\x${ch.charCodeAt(0).toString(16).padStart(2, "0")}`
-    }
-  }
-  return result.replace(/^-+/, "")
 }

@@ -6,6 +6,7 @@
 import type { ShareResponse } from "../../shared/schemas/shares"
 import { type CommandSpec, shellEscape } from "../executor/command"
 import { logger } from "../logger"
+import { systemdEscapePath } from "../systemd/escape"
 
 // --- Types ---
 
@@ -513,8 +514,8 @@ function buildPlanSteps(
   })
 
   // Step 9: Write systemd mount unit
-  const mountUnitName = systemdEscapePath(`${share.targetPath}.mount`)
-  const automountUnitName = systemdEscapePath(`${share.targetPath}.automount`)
+  const mountUnitName = `${systemdEscapePath(share.targetPath)}.mount`
+  const automountUnitName = `${systemdEscapePath(share.targetPath)}.automount`
   const mountUnitPath = shellEscape(`/etc/systemd/system/${mountUnitName}`)
   const automountUnitPath = shellEscape(`/etc/systemd/system/${automountUnitName}`)
   const nfsSource = `${sourceNode.primaryIp ?? sourceNode.host}:${share.sourcePath}`
@@ -523,9 +524,8 @@ function buildPlanSteps(
   const disableAutomountScript = [
     "automount_unit=$1",
     "automount_path=$2",
-    'systemctl stop "$automount_unit" >/dev/null 2>&1 || true',
-    'systemctl disable "$automount_unit" >/dev/null 2>&1 || true',
-    'rm -f "$automount_path"',
+    "share_id=$3",
+    'if [ -f "$automount_path" ] && grep -Fq "share_id=$share_id" "$automount_path"; then systemctl stop "$automount_unit" >/dev/null 2>&1 || true; systemctl disable "$automount_unit" >/dev/null 2>&1 || true; rm -f "$automount_path"; fi',
   ].join("; ")
   const systemdUnitCommands = [
     sudoShellCmd(
@@ -576,6 +576,7 @@ function buildPlanSteps(
               "sh",
               automountUnitName,
               `/etc/systemd/system/${automountUnitName}`,
+              share.id,
             ],
             10_000,
             `disable stale ${automountUnitName}`,
@@ -605,7 +606,11 @@ function buildPlanSteps(
       : [tgtCmd("systemctl", ["stop", mountUnitName], 10_000, `systemctl stop ${mountUnitName}`)]),
     tgtCmd(
       "rm",
-      ["-f", `/etc/systemd/system/${mountUnitName}`, `/etc/systemd/system/${automountUnitName}`],
+      [
+        "-f",
+        `/etc/systemd/system/${mountUnitName}`,
+        ...(share.autoMount ? [`/etc/systemd/system/${automountUnitName}`] : []),
+      ],
       3_000,
       "Remove systemd units",
     ),
@@ -791,8 +796,6 @@ function buildAutomountUnitContent(share: ShareResponse): string {
   ].join("\n")
 }
 
-// --- systemd path escaping ---
-
 /** Quote each line of a multi-line string as a separate shell argument for printf '%s\n'.
  *  Each line is single-quote-escaped, then joined with spaces. */
 function shellQuoteLines(content: string): string {
@@ -812,29 +815,4 @@ function sudoShellCmd(
   return sudo && sudoPassword !== undefined
     ? { executable: "sh", args, sudo, sudoPassword, timeoutMs, preview }
     : { executable: "sh", args, sudo, timeoutMs, preview }
-}
-
-/** Escape a filesystem path into a systemd unit name suffix.
- *  Rules: '/' → '-', leading '-' trimmed, '-' → '\\x2d', other special chars → '\\xHH'. */
-function systemdEscapePath(path: string): string {
-  let result = ""
-  for (const ch of path) {
-    if (ch === "/") {
-      result += "-"
-    } else if (ch === "-") {
-      result += "\\x2d"
-    } else if (
-      (ch >= "a" && ch <= "z") ||
-      (ch >= "A" && ch <= "Z") ||
-      (ch >= "0" && ch <= "9") ||
-      ch === "_" ||
-      ch === "."
-    ) {
-      result += ch
-    } else {
-      result += `\\x${ch.charCodeAt(0).toString(16).padStart(2, "0")}`
-    }
-  }
-  // Trim leading dashes (from leading slashes)
-  return result.replace(/^-+/, "")
 }

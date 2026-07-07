@@ -45,7 +45,12 @@ import {
 } from "../api/client"
 import { PathBrowser } from "../components/path-browser"
 import { Button, Panel, SelectField, StatusBadge, TextField } from "../components/primitives"
-import { formatApplyHealthMessage, shareStatusFromHealth } from "./share-health"
+import {
+  formatApplyHealthMessage,
+  formatInterconnectivitySuccessMessage,
+  interconnectivityPassed,
+  shareStatusFromHealth,
+} from "./share-health"
 
 const ACCESS_MODE_OPTIONS = [
   { value: "read_write", label: "读写" },
@@ -659,14 +664,8 @@ function ShareRow({ share, nodes, onDeleted, onEdit, onStatusChange }: ShareRowP
         targetPath: share.targetPath,
       })
       setInterconnectResult(result)
-      const allOk =
-        result.crossReachable === "ok" &&
-        result.mountStatus === "mounted" &&
-        result.readTest !== "failed" &&
-        result.writeTest !== "failed" &&
-        result.exportStatus !== "not_exported"
-      if (allOk) {
-        setStatusInfo("检查通过：NFS 连通、已挂载、读写正常。")
+      if (interconnectivityPassed(result, share.accessMode)) {
+        setStatusInfo(formatInterconnectivitySuccessMessage(share.accessMode))
       } else {
         setStatusError(result.summary)
       }
