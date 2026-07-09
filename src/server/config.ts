@@ -1,5 +1,24 @@
 import { z } from "zod"
 
+const BooleanEnvironmentSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .transform((value, context) => {
+    if (value === "true" || value === "1") {
+      return true
+    }
+    if (value === "false" || value === "0") {
+      return false
+    }
+
+    context.addIssue({
+      code: "custom",
+      message: "Expected a boolean environment value: true, false, 1, or 0.",
+    })
+    return z.NEVER
+  })
+
 const ConfigSchema = z.object({
   host: z.string().default("127.0.0.1"),
   port: z.coerce.number().int().min(1).max(65535).default(18_188),
@@ -9,8 +28,8 @@ const ConfigSchema = z.object({
   sessionCookieName: z.string().default("lsm_session"),
   sessionTtlSeconds: z.coerce.number().int().positive().default(86_400),
   sshConnectTimeoutMs: z.coerce.number().int().positive().default(5_000),
-  trustProxy: z.coerce.boolean().default(false),
-  secureCookie: z.coerce.boolean().default(false),
+  trustProxy: BooleanEnvironmentSchema.default(false),
+  secureCookie: BooleanEnvironmentSchema.default(false),
   webOrigin: z.url().default("http://127.0.0.1:5173"),
 })
 
