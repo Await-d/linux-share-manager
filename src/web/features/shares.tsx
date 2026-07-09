@@ -543,6 +543,46 @@ function ShareRow({ share, nodes, onDeleted, onEdit, onStatusChange }: ShareRowP
     }
   }
 
+  async function handleRegenerateAndApplyPlan(): Promise<void> {
+    setOperating(true)
+    setStatusError(null)
+    setStatusInfo(null)
+    setPreCheckResult(null)
+    setPlanView(null)
+    setShowFailureDetails(false)
+    try {
+      const generated = await generateSharePlan(share.id)
+      setPlanView(generated.plan)
+      if (generated.preCheck) {
+        setPreCheckResult(generated.preCheck.summary)
+        setPreCheckTone(
+          generated.preCheck.passed
+            ? generated.preCheck.warnings.length > 0
+              ? "warning"
+              : "success"
+            : "error",
+        )
+      }
+
+      const result = await applySharePlan(share.id, generated.plan.id)
+      const mergedPlan: PlanResponse = { ...generated.plan, results: [...result.results] }
+      setPlanView(mergedPlan)
+      if (result.allSucceeded) {
+        await verifyAppliedShare("重新生成并执行完成，共享已按最新配置生效。")
+      } else {
+        onStatusChange({ ...share, status: "partial_failed" as ShareStatus })
+        const failedCount = result.results.filter((r) => r.status === "failed").length
+        setStatusError(`重新生成后执行失败：${failedCount} 个步骤失败，请查看下方详情。`)
+        setShowFailureDetails(true)
+      }
+    } catch (caught) {
+      setStatusError(await errorMessage(caught))
+      onStatusChange({ ...share, status: "partial_failed" as ShareStatus })
+    } finally {
+      setOperating(false)
+    }
+  }
+
   async function handleRetryPlan(): Promise<void> {
     setOperating(true)
     setStatusError(null)
@@ -768,6 +808,14 @@ function ShareRow({ share, nodes, onDeleted, onEdit, onStatusChange }: ShareRowP
           ) : null}
           {share.status === "active" || share.status === "degraded" ? (
             <>
+              <Button
+                disabled={operating}
+                icon={RefreshCw}
+                onClick={() => void handleRegenerateAndApplyPlan()}
+                variant="primary"
+              >
+                {operating ? "执行中" : "重新生成并执行"}
+              </Button>
               <Button
                 disabled={operating}
                 icon={Search}

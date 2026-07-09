@@ -98,6 +98,18 @@ const FORBIDDEN_PATHS = [
 ]
 
 const NFS_VERSION_PREFERENCE: readonly SupportedNfsVersion[] = ["4.2", "4.1", "4", "3"]
+const DEFAULT_NFS_CLIENT_OPTIONS = [
+  "_netdev",
+  "nofail",
+  "noatime",
+  "rsize=1048576",
+  "wsize=1048576",
+  "actimeo=30",
+  "lookupcache=positive",
+  "nconnect=4",
+  "timeo=30",
+  "retrans=2",
+] as const
 
 // --- Path validation ---
 
@@ -286,11 +298,10 @@ function buildPlanSteps(
 ): readonly PlanStep[] {
   const steps: PlanStep[] = []
   const accessOpts = share.accessMode === "read_only" ? "ro" : "rw"
-  const exportOptions = `${accessOpts},sync,no_subtree_check,root_squash`
   const portOption = nfsPort !== undefined && nfsPort !== 2049 ? `,port=${nfsPort}` : ""
   const nfsVersionOptions =
     nfsVersion === "3" ? "vers=3,proto=tcp,mountproto=tcp" : `vers=${nfsVersion}`
-  const mountOptions = `${nfsVersionOptions},_netdev,nofail,hard,timeo=50,retrans=2${portOption}`
+  const mountOptions = `${nfsVersionOptions},${DEFAULT_NFS_CLIENT_OPTIONS.join(",")}${portOption}`
 
   // Determine sudo strategy for each node:
   // - sudoOk=true → use sudo -n (NOPASSWD)
@@ -422,7 +433,22 @@ function buildPlanSteps(
   })
 
   // Step 4: Write exports managed block
-  const exportsContent = buildExportsContent(share, targetNode, exportOptions)
+  const writeExportsScript = [
+    "source_path=$1",
+    "client=$2",
+    "access_opts=$3",
+    "share_id=$4",
+    `owner=$(stat -c '%u:%g' -- "$source_path")`,
+    "anonuid=$" + "{owner%:*}",
+    "anongid=$" + "{owner#*:}",
+    "export_options=$" +
+      "{access_opts},sync,no_subtree_check,all_squash,anonuid=$" +
+      "{anonuid},anongid=$" +
+      "{anongid}",
+    "printf '%s\\n' \"# BEGIN LINUX_SHARE_MANAGER share_id=$" +
+      '{share_id}" "$source_path $client($export_options)" "# END LINUX_SHARE_MANAGER share_id=$' +
+      '{share_id}" | tee -a /etc/exports > /dev/null',
+  ].join("; ")
   steps.push({
     key: "write-exports",
     name: "配置 NFS exports",
@@ -433,7 +459,12 @@ function buildPlanSteps(
       sudoShellCmd(
         [
           "-c",
-          `printf '%s\\n' ${shellQuoteLines(exportsContent)} | tee -a /etc/exports > /dev/null`,
+          writeExportsScript,
+          "sh",
+          share.sourcePath,
+          targetNode.primaryIp ?? targetNode.host,
+          accessOpts,
+          share.id,
         ],
         5_000,
         `append exports config to /etc/exports`,
@@ -521,6 +552,12 @@ function buildPlanSteps(
   const nfsSource = `${sourceNode.primaryIp ?? sourceNode.host}:${share.sourcePath}`
   const mountUnitContent = buildMountUnitContent(share, nfsSource, mountOptions)
   const automountUnitContent = buildAutomountUnitContent(share)
+  const refreshStaleMountScript = [
+    "automount_unit=$1",
+    "mount_unit=$2",
+    'systemctl stop "$automount_unit" >/dev/null 2>&1 || true',
+    'systemctl stop "$mount_unit" >/dev/null 2>&1 || true',
+  ].join("; ")
   const disableAutomountScript = [
     "automount_unit=$1",
     "automount_path=$2",
@@ -552,6 +589,13 @@ function buildPlanSteps(
           ),
         ]
       : []),
+    sudoShellCmd(
+      ["-c", refreshStaleMountScript, "sh", automountUnitName, mountUnitName],
+      15_000,
+      `refresh stale ${automountUnitName} and ${mountUnitName}`,
+      targetSudo,
+      targetSudoPassword,
+    ),
     tgtCmd("systemctl", ["daemon-reload"], 5_000, "systemctl daemon-reload"),
     ...(share.autoMount
       ? [
@@ -744,18 +788,6 @@ function nfsClientInstallCommands(osFamily: string | null, sudo: boolean): reado
 }
 
 // --- Unit file builders ---
-
-function buildExportsContent(
-  share: ShareResponse,
-  targetNode: PlanNodeInfo,
-  exportOptions: string,
-): string {
-  return [
-    `# BEGIN LINUX_SHARE_MANAGER share_id=${share.id}`,
-    `${share.sourcePath} ${targetNode.primaryIp ?? targetNode.host}(${exportOptions})`,
-    `# END LINUX_SHARE_MANAGER share_id=${share.id}`,
-  ].join("\n")
-}
 
 function buildMountUnitContent(
   share: ShareResponse,

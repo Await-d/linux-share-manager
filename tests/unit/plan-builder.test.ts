@@ -111,8 +111,26 @@ describe("share plan builder", () => {
     const script = writeExportsCommand.args.join("\n")
 
     // Then: the NFS server allows the client address, not its own source address.
-    expect(script).toContain(`${SHARE.sourcePath} ${TARGET_NODE.primaryIp}(`)
-    expect(script).not.toContain(`${SHARE.sourcePath} ${SOURCE_NODE_WITH_PASSWORD_SUDO.primaryIp}(`)
+    expect(writeExportsCommand.args).toContain(SHARE.sourcePath)
+    expect(writeExportsCommand.args).toContain(TARGET_NODE.primaryIp ?? TARGET_NODE.host)
+    expect(writeExportsCommand.args).not.toContain(SOURCE_NODE_WITH_PASSWORD_SUDO.primaryIp)
+    expect(script).toContain("$source_path $client($export_options)")
+  })
+
+  it("maps NFS clients to the source directory owner during export writes", () => {
+    // Given: a source directory may be owned by a NAS-specific uid/gid.
+    const plan = generateSharePlan(SHARE, SOURCE_NODE_WITH_PASSWORD_SUDO, TARGET_NODE)
+
+    // When: the exports write command is generated.
+    const writeExportsCommand = firstCommandForStep(plan, "write-exports")
+    const script = writeExportsCommand.args.join("\n")
+
+    // Then: the remote command discovers that owner and writes anon uid/gid mapping.
+    expect(script).toContain("owner=$(stat -c '%u:%g'")
+    expect(script).toContain("anonuid=$" + "{owner%:*}")
+    expect(script).toContain("anongid=$" + "{owner#*:}")
+    expect(script).toContain("all_squash,anonuid=$" + "{anonuid},anongid=$" + "{anongid}")
+    expect(script).not.toContain("root_squash")
   })
 
   it("pins NFS 3 systemd mounts to TCP protocols", () => {
@@ -125,7 +143,9 @@ describe("share plan builder", () => {
     const script = mountCommand.args.join("\n")
 
     // Then: both NFS and mountd negotiation stay on TCP.
-    expect(script).toContain("Options=vers=3,proto=tcp,mountproto=tcp,_netdev")
+    expect(script).toContain(
+      "Options=vers=3,proto=tcp,mountproto=tcp,_netdev,nofail,noatime,rsize=1048576,wsize=1048576,actimeo=30,lookupcache=positive,nconnect=4,timeo=30,retrans=2",
+    )
   })
 
   it("resolves automatic NFS version to the best supported source version", () => {
@@ -142,7 +162,9 @@ describe("share plan builder", () => {
     // Then: the plan chooses the highest compatible version and records what happened.
     expect(plan.config.nfsVersion).toBe("4.1")
     expect(plan.config.requestedNfsVersion).toBe("auto")
-    expect(script).toContain("Options=vers=4.1,_netdev")
+    expect(script).toContain(
+      "Options=vers=4.1,_netdev,nofail,noatime,rsize=1048576,wsize=1048576,actimeo=30,lookupcache=positive,nconnect=4,timeo=30,retrans=2",
+    )
   })
 
   it("resolves automatic NFS version to NFS 3 when only legacy support is available", () => {
@@ -158,7 +180,9 @@ describe("share plan builder", () => {
 
     // Then: the generated mount unit uses the NFS 3 TCP-safe options.
     expect(plan.config.nfsVersion).toBe("3")
-    expect(script).toContain("Options=vers=3,proto=tcp,mountproto=tcp,_netdev")
+    expect(script).toContain(
+      "Options=vers=3,proto=tcp,mountproto=tcp,_netdev,nofail,noatime,rsize=1048576,wsize=1048576,actimeo=30,lookupcache=positive,nconnect=4,timeo=30,retrans=2",
+    )
   })
 
   it("quotes escaped systemd unit paths when writing unit files", () => {
@@ -178,6 +202,38 @@ describe("share plan builder", () => {
     expect(automountScript).toContain(
       "tee '/etc/systemd/system/home-await-project-00\\x2dnew\\x2dproperty.automount'",
     )
+  })
+
+  it("refreshes existing automount and mount units before enabling the rewritten units", () => {
+    // Given: a share may already be mounted with stale NFS options from a previous deployment.
+    const plan = generateSharePlan(SHARE, SOURCE_NODE_WITH_PASSWORD_SUDO, TARGET_NODE)
+
+    // When: the target systemd step is generated.
+    const commands = commandsForStep(plan, "write-systemd-units")
+    const previews = commands.map((command) => command.preview)
+
+    // Then: the old live units are stopped before systemd reloads and starts the rewritten units.
+    expect(previews).toContain("refresh stale mnt-project.automount and mnt-project.mount")
+    expect(
+      previews.indexOf("refresh stale mnt-project.automount and mnt-project.mount"),
+    ).toBeLessThan(previews.indexOf("systemctl daemon-reload"))
+    expect(previews.indexOf("systemctl daemon-reload")).toBeLessThan(
+      previews.indexOf("systemctl start mnt-project.automount"),
+    )
+
+    const refreshCommand = commands.find((command) =>
+      command.preview.includes("refresh stale mnt-project.automount"),
+    )
+    expect(refreshCommand).toBeDefined()
+    if (refreshCommand === undefined) {
+      throw new Error("expected stale unit refresh command")
+    }
+
+    const refreshScript = refreshCommand.args.join("\n")
+    expect(refreshScript).toContain('systemctl stop "$automount_unit"')
+    expect(refreshScript).toContain('systemctl stop "$mount_unit"')
+    expect(refreshScript).toContain("mnt-project.automount")
+    expect(refreshScript).toContain("mnt-project.mount")
   })
 
   it("mounts and removes stale automount when automatic mount config is disabled", () => {
